@@ -1,0 +1,189 @@
+name: 📦 Build Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+jobs:
+  build-all:
+    name: 📦 Build All Components
+    runs-on: windows-latest
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: 🔧 Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: ⚡ Setup Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: 💾 Cache Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/_deps
+            externa/build/_deps
+          key: ${{ runner.os }}-release-${{ hashFiles('**/CMakeLists.txt') }}
+
+      - name: ⚙️ Configure
+        run: |
+          $version = "${{ github.ref_name }}"
+          if ([string]::IsNullOrEmpty($version) -or $version -eq "main") {
+            $version = "${{ github.event.inputs.version }}"
+          }
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "   EXTERNAL ESP $version"
+          Write-Host "   Building All Components..."
+          Write-Host "=========================================="
+          Write-Host ""
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: 🔨 Build EXTERNAL
+        run: cmake --build build --target Externa --config Release --parallel
+
+      - name: 🔨 Build INTERNAL
+        run: cmake --build build --target interna --config Release --parallel
+
+      - name: 🔨 Build INJECTOR
+        run: cmake --build build --target injector --config Release --parallel
+
+      - name: 🔨 Build LAUNCHER
+        run: cmake --build build --target launcher --config Release --parallel
+
+      - name: 📁 Prepare Release Files
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ([string]::IsNullOrEmpty($tag) -or $tag -eq "main") {
+            $tag = "${{ github.event.inputs.version }}"
+          }
+          # Extract clean version (v1.0.0-release -> v1.0.0)
+          $version = $tag -replace '-release$', '' -replace '-dev$', ''
+          
+          New-Item -ItemType Directory -Force -Path release
+          
+          # Copy from build folders with clean names
+          Get-ChildItem -Path build/externa -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item $_.FullName "release/External - $version.exe"
+          }
+          Get-ChildItem -Path build/interna -Filter *.dll -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item $_.FullName "release/Internal - $version.dll"
+          }
+          Get-ChildItem -Path build/injector -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item $_.FullName "release/Injector - $version.exe"
+          }
+          Get-ChildItem -Path build/launcher -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item $_.FullName "release/Launcher - $version.exe"
+          }
+          
+          # Also check bin folder
+          Get-ChildItem -Path build/bin -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object {
+            $name = $_.BaseName
+            if ($name -match "externa|external") { $name = "External" }
+            elseif ($name -match "interna|internal") { $name = "Internal" }
+            elseif ($name -match "inject") { $name = "Injector" }
+            elseif ($name -match "launch") { $name = "Launcher" }
+            Copy-Item $_.FullName "release/$name - $version.exe"
+          }
+          Get-ChildItem -Path build/bin -Filter *.dll -ErrorAction SilentlyContinue | ForEach-Object {
+            $name = $_.BaseName
+            if ($name -match "interna|internal") { $name = "Internal" }
+            Copy-Item $_.FullName "release/$name - $version.dll"
+          }
+          
+          # List files
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "   Release Files:"
+          Write-Host "=========================================="
+          Get-ChildItem release/
+          
+      - name: 📦 Create Full Package ZIP
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ([string]::IsNullOrEmpty($tag) -or $tag -eq "main") {
+            $tag = "${{ github.event.inputs.version }}"
+          }
+          $version = $tag -replace '-release$', '' -replace '-dev$', ''
+          
+          # Create full package
+          Compress-Archive -Path release/* -DestinationPath "EXTERNAL ESP - $version - Full.zip"
+          Write-Host "Created: EXTERNAL ESP - $version - Full.zip"
+          
+      - name: 🚀 Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name || github.event.inputs.version }}
+          name: "🚀 EXTERNAL ESP ${{ github.ref_name || github.event.inputs.version }}"
+          body: |
+            ![EXTERNAL ESP](https://raw.githubusercontent.com/${{ github.repository }}/main/assets/banner.png)
+            
+            ## ⚡ EXTERNAL ESP ${{ github.ref_name || github.event.inputs.version }}
+            
+            Complete CS2 Enhancement Suite
+            
+            ---
+            
+            ### 📦 Downloads
+            
+            #### 🎁 Full Package (All-in-One)
+            | File | Description |
+            |:----:|-------------|
+            | `EXTERNAL ESP - vX.X.X - Full.zip` | 📦 **All components in one archive** |
+            
+            #### 🔧 Individual Components
+            | File | Description |
+            |:----:|-------------|
+            | `External - vX.X.X.exe` | 🔓 Overlay ESP (recommended) |
+            | `Internal - vX.X.X.dll` | 🔒 DLL for injection |
+            | `Injector - vX.X.X.exe` | 💉 Manual Map Injector |
+            | `Launcher - vX.X.X.exe` | 🚀 Premium GUI Manager |
+            
+            ---
+            
+            ### 🎮 Quick Start
+            
+            **Option 1: Use Launcher (Recommended)**
+            1. Download `Launcher-*.exe` + either `External-*.exe` or (`Internal-*.dll` + `Injector-*.exe`)
+            2. Put all files in one folder
+            3. Run CS2 → Run Launcher as Admin → Select mode → LAUNCH
+            
+            **Option 2: Direct Launch**
+            - 🔓 External: Run `External-*.exe` (CS2 must be Windowed/Borderless)
+            - 🔒 Internal: Run `Injector-*.exe` (will inject `Internal-*.dll`)
+            
+            **Controls:** `INSERT` = Menu | `END` = Exit
+            
+            ---
+            
+            ### ⚠️ Requirements
+            - Windows 10/11 x64
+            - CS2 in Windowed/Borderless mode
+            - Run as Administrator
+            
+            ---
+            
+            > ⚠️ **Educational purposes only!**
+          files: |
+            EXTERNAL ESP - *.zip
+            release/External - *.exe
+            release/Internal - *.dll
+            release/Injector - *.exe
+            release/Launcher - *.exe
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,67 @@
+name: 🔓 Build External
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-external:
+    name: 🔓 EXTERNAL (Overlay ESP)
+    runs-on: windows-latest
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+      
+      - name: 🔧 Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      
+      - name: ⚡ Setup Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+      
+      - name: 💾 Cache Dependencies
+        uses: actions/cache@v4
+        with:
+          path: externa/build/_deps
+          key: ${{ runner.os }}-external-${{ hashFiles('externa/CMakeLists.txt') }}
+          restore-keys: ${{ runner.os }}-external-
+      
+      - name: ⚙️ Configure
+        working-directory: externa
+        run: |
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "   EXTERNAL ESP v1.0.0"
+          Write-Host "=========================================="
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      
+      - name: 🔨 Build
+        working-directory: externa
+        run: cmake --build build --config Release --parallel
+      
+      - name: ✅ Verify
+        working-directory: externa
+        run: |
+          $exe = Get-ChildItem -Path build -Filter "*.exe" | Select-Object -First 1
+          if ($exe) {
+            $size = [math]::Round($exe.Length / 1KB, 2)
+            Write-Host ""
+            Write-Host "=========================================="
+            Write-Host "   BUILD SUCCESS"
+            Write-Host "   File: $($exe.Name)"
+            Write-Host "   Size: $size KB"
+            Write-Host "=========================================="
+          } else {
+            Write-Error "Build failed!"
+            exit 1
+          }
+      
+      - name: 📦 Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: External-${{ github.run_number }}
+          path: externa/build/*.exe
+          retention-days: 30
