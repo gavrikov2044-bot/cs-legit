@@ -7,6 +7,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 
@@ -27,6 +28,16 @@ app.use(express.static(path.join(__dirname, '../../public')));
 // ============================================
 // Middleware
 // ============================================
+
+// Compression for all responses (gzip)
+app.use(compression({
+    level: 6, // Balance between speed and compression
+    threshold: 1024, // Only compress responses > 1KB
+    filter: (req, res) => {
+        if (req.headers['x-no-compression']) return false;
+        return compression.filter(req, res);
+    }
+}));
 
 app.use(helmet());
 app.use(cors());

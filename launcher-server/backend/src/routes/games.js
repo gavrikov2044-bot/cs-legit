@@ -10,12 +10,12 @@ const path = require('path');
 
 const router = express.Router();
 
-// Status cache
+// Status cache - faster updates (2 seconds instead of 60)
 let statusCache = {
     data: null,
     timestamp: 0
 };
-const CACHE_TTL = 60000; // 1 minute
+const CACHE_TTL = 2000; // 2 seconds for instant updates
 
 /**
  * GET /api/games/status
