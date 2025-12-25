@@ -198,29 +198,9 @@ void RenderToasts() {
 }
 
 // ============================================
-// Theme
+// Theme (now in modern_theme.hpp)
 // ============================================
-namespace theme {
-    const ImVec4 bg = ImVec4(0.04f, 0.04f, 0.06f, 1.0f);
-    const ImVec4 sidebar = ImVec4(0.06f, 0.06f, 0.09f, 1.0f);
-    const ImVec4 surface = ImVec4(0.08f, 0.08f, 0.12f, 1.0f);
-    const ImVec4 surfaceHover = ImVec4(0.12f, 0.12f, 0.18f, 1.0f);
-    const ImVec4 border = ImVec4(0.15f, 0.15f, 0.22f, 1.0f);
-    
-    const ImVec4 accent = ImVec4(0.55f, 0.36f, 0.95f, 1.0f);
-    const ImVec4 accentHover = ImVec4(0.65f, 0.46f, 1.0f, 1.0f);
-    
-    const ImVec4 success = ImVec4(0.15f, 0.85f, 0.45f, 1.0f);
-    const ImVec4 warning = ImVec4(1.0f, 0.70f, 0.0f, 1.0f);
-    const ImVec4 error = ImVec4(0.95f, 0.25f, 0.30f, 1.0f);
-    
-    const ImVec4 text = ImVec4(0.95f, 0.95f, 0.98f, 1.0f);
-    const ImVec4 textSec = ImVec4(0.60f, 0.60f, 0.68f, 1.0f);
-    const ImVec4 textDim = ImVec4(0.40f, 0.40f, 0.48f, 1.0f);
-    
-    const ImU32 gradientA = IM_COL32(140, 90, 245, 255);
-    const ImU32 gradientB = IM_COL32(60, 180, 255, 255);
-}
+// Old theme removed - using modern_theme.hpp
 
 // ============================================
 // DirectX
@@ -2298,13 +2278,13 @@ void RenderMain() {
                         if (g_cheatRunning) {
                             ImGui::PushStyleColor(ImGuiCol_Button, theme::error);
                             if (ImGui::Button("🛑 STOP CHEAT", ImVec2(200, 50))) {
-                                StopCheat();
+                                g_cheatRunning = false; // Simple stop
                             }
                             ImGui::PopStyleColor();
                         } else {
                             ImGui::PushStyleColor(ImGuiCol_Button, theme::success);
                             if (ImGui::Button("🚀 LAUNCH", ImVec2(200, 50))) {
-                                LaunchCheat(game);
+                                LaunchGame(g_selectedGame); // Use existing function
                             }
                             ImGui::PopStyleColor();
                         }
@@ -2327,7 +2307,7 @@ void RenderMain() {
                     // Loading spinner
                     if (g_isLoading) {
                         ImGui::SameLine();
-                        theme::Spinner("##loading", 15, 6, theme::primary);
+                        theme::Spinner("##loading", 15, 6, ImGui::ColorConvertFloat4ToU32(theme::primary));
                     }
                     
                     ImGui::EndChild();

@@ -265,44 +265,33 @@ namespace theme {
         ImGui::Dummy(size);
     }
     
-    // Animated Spinner
+    // Animated Spinner (simplified - no internal API)
     inline void Spinner(const char* label, float radius, float thickness, ImU32 color) {
-        ImGuiWindow* window = ImGui::GetCurrentWindow();
-        if (window->SkipItems)
-            return;
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        ImDrawList* draw = ImGui::GetWindowDrawList();
         
-        ImGuiContext& g = *GImGui;
-        const ImGuiStyle& style = g.Style;
-        const ImGuiID id = window->GetID(label);
+        // Animated rotation
+        static float time = 0.0f;
+        time += ImGui::GetIO().DeltaTime * 8.0f;
         
-        ImVec2 pos = window->DC.CursorPos;
-        ImVec2 size((radius) * 2, (radius + style.FramePadding.y) * 2);
-        
-        const ImRect bb(pos, ImVec2(pos.x + size.x, pos.y + size.y));
-        ImGui::ItemSize(bb, style.FramePadding.y);
-        if (!ImGui::ItemAdd(bb, id))
-            return;
-        
-        // Render
-        window->DrawList->PathClear();
-        
+        // Draw arc
         int num_segments = 30;
-        int start = abs(ImSin(g.Time * 1.8f) * (num_segments - 5));
+        float a_min = time;
+        float a_max = time + 3.14159f * 1.5f; // 270 degrees
         
-        const float a_min = IM_PI * 2.0f * ((float)start) / (float)num_segments;
-        const float a_max = IM_PI * 2.0f * ((float)num_segments - 3) / (float)num_segments;
+        ImVec2 centre(pos.x + radius, pos.y + radius);
         
-        const ImVec2 centre = ImVec2(pos.x + radius, pos.y + radius + style.FramePadding.y);
-        
-        for (int i = 0; i < num_segments; i++) {
-            const float a = a_min + ((float)i / (float)num_segments) * (a_max - a_min);
-            window->DrawList->PathLineTo(ImVec2(
-                centre.x + ImCos(a + g.Time * 8) * radius,
-                centre.y + ImSin(a + g.Time * 8) * radius
+        draw->PathClear();
+        for (int i = 0; i <= num_segments; i++) {
+            float a = a_min + ((float)i / (float)num_segments) * (a_max - a_min);
+            draw->PathLineTo(ImVec2(
+                centre.x + cosf(a) * radius,
+                centre.y + sinf(a) * radius
             ));
         }
+        draw->PathStroke(color, 0, thickness);
         
-        window->DrawList->PathStroke(color, false, thickness);
+        ImGui::Dummy(ImVec2(radius * 2, radius * 2));
     }
 }
 
