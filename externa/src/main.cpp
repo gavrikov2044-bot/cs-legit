@@ -84,6 +84,16 @@ namespace offsets {
     constexpr uintptr_t m_hPlayerPawn = 0x8FC;       // 2300
     constexpr uintptr_t m_iszPlayerName = 0x6E8;     // 1768
     
+    // NEW: Advanced ESP offsets
+    constexpr uintptr_t m_hObserverTarget = 0x44;    // Observer target (spectator)
+    constexpr uintptr_t m_iObserverMode = 0x40;      // Observer mode
+    constexpr uintptr_t m_bSpotted = 0x8;            // Radar spotted
+    constexpr uintptr_t m_flC4Blow = 0x2C;           // C4 blow time
+    constexpr uintptr_t m_bBombPlanted = 0x30;       // Bomb planted
+    constexpr uintptr_t m_AttributeManager = 0x10;   // For weapon info
+    constexpr uintptr_t m_Item = 0x50;               // Item definition
+    constexpr uintptr_t m_iItemDefinitionIndex = 0x1D2; // Weapon ID
+    
     // Bone indices for skeleton
     namespace bones {
         constexpr int HEAD = 6;
@@ -751,6 +761,76 @@ bool WorldToScreen(const ViewMatrix& m, const Vec3& pos, Vec3& out) {
     return true;
 }
 
+// ====================================
+// HELPER FUNCTIONS FOR ADVANCED ESP
+// ====================================
+
+// Get weapon name by ID
+const char* getWeaponName(int weaponID) {
+    switch (weaponID) {
+        case 1: return "Deagle";
+        case 2: return "Dual Berettas";
+        case 3: return "Five-Seven";
+        case 4: return "Glock-18";
+        case 7: return "AK-47";
+        case 8: return "AUG";
+        case 9: return "AWP";
+        case 10: return "FAMAS";
+        case 11: return "G3SG1";
+        case 13: return "Galil AR";
+        case 14: return "M249";
+        case 16: return "M4A4";
+        case 17: return "MAC-10";
+        case 19: return "P90";
+        case 23: return "MP5-SD";
+        case 24: return "UMP-45";
+        case 25: return "XM1014";
+        case 26: return "PP-Bizon";
+        case 27: return "MAG-7";
+        case 28: return "Negev";
+        case 29: return "Sawed-Off";
+        case 30: return "Tec-9";
+        case 31: return "Zeus x27";
+        case 32: return "P2000";
+        case 33: return "MP7";
+        case 34: return "MP9";
+        case 35: return "Nova";
+        case 36: return "P250";
+        case 38: return "SCAR-20";
+        case 39: return "SG 553";
+        case 40: return "SSG 08";
+        case 60: return "M4A1-S";
+        case 61: return "USP-S";
+        case 63: return "CZ75-Auto";
+        case 64: return "R8 Revolver";
+        case 500: return "Bayonet";
+        case 503: return "Knife";
+        case 505: return "Flip Knife";
+        case 506: return "Gut Knife";
+        case 507: return "Karambit";
+        case 508: return "M9 Bayonet";
+        case 509: return "Huntsman Knife";
+        case 515: return "Butterfly Knife";
+        case 516: return "Shadow Daggers";
+        case 42: return "C4";
+        case 43: return "Flashbang";
+        case 44: return "HE Grenade";
+        case 45: return "Smoke";
+        case 46: return "Molotov";
+        case 47: return "Decoy";
+        case 48: return "Incendiary";
+        default: return "Unknown";
+    }
+}
+
+// Check if weapon is valuable for Loot ESP
+bool isValuableWeapon(int weaponID) {
+    // Rifles, snipers, expensive pistols
+    return weaponID == 7 || weaponID == 8 || weaponID == 9 || weaponID == 10 || 
+           weaponID == 11 || weaponID == 13 || weaponID == 16 || weaponID == 38 || 
+           weaponID == 39 || weaponID == 40 || weaponID == 60 || weaponID == 1;
+}
+
 // ============================================
 // Render ESP - 100% ASYNC CONSUMER
 // Only draws data from the latest snapshot
@@ -956,6 +1036,250 @@ void renderESP() {
         float cy = g_gameBounds.bottom / 2.f;
         draw->AddLine({cx - 8, cy}, {cx + 8, cy}, IM_COL32(255, 0, 0, 255), 1.5f);
         draw->AddLine({cx, cy - 8}, {cx, cy + 8}, IM_COL32(255, 0, 0, 255), 1.5f);
+    }
+
+    // ====================================
+    // NEW ADVANCED ESP FEATURES
+    // ====================================
+    
+    // 1. RADAR HACK - Mini radar in corner
+    if (esp_menu::g_config.radarHack) {
+        const float radarSize = 150.f;
+        const float radarX = g_gameBounds.right - radarSize - 20.f;
+        const float radarY = 20.f;
+        const float radarCenterX = radarX + radarSize / 2.f;
+        const float radarCenterY = radarY + radarSize / 2.f;
+        const float radarScale = 5.f; // meters per pixel
+        
+        // Background
+        draw->AddRectFilled(
+            ImVec2(radarX, radarY), 
+            ImVec2(radarX + radarSize, radarY + radarSize),
+            IM_COL32(20, 20, 30, 200)
+        );
+        draw->AddRect(
+            ImVec2(radarX, radarY), 
+            ImVec2(radarX + radarSize, radarY + radarSize),
+            IM_COL32(100, 100, 255, 255), 1.5f
+        );
+        
+        // Center dot (local player)
+        draw->AddCircleFilled(
+            ImVec2(radarCenterX, radarCenterY), 
+            4.f, 
+            IM_COL32(0, 255, 0, 255)
+        );
+        
+        // Draw all players on radar
+        if (snap.localPawn) {
+            for (const auto& p : snap.players) {
+                if (!p.valid) continue;
+                
+                // Calculate relative position
+                float dx = p.origin.x - snap.localPawn->origin.x;
+                float dy = p.origin.y - snap.localPawn->origin.y;
+                
+                // Convert to radar coordinates
+                float dotX = radarCenterX + (dx / radarScale);
+                float dotY = radarCenterY - (dy / radarScale);
+                
+                // Clamp to radar bounds
+                dotX = std::clamp(dotX, radarX + 3.f, radarX + radarSize - 3.f);
+                dotY = std::clamp(dotY, radarY + 3.f, radarY + radarSize - 3.f);
+                
+                // Color based on team
+                ImU32 dotColor = (p.team == snap.localPawn->team) ? 
+                    IM_COL32(0, 150, 255, 255) : // Blue for teammates
+                    IM_COL32(255, 0, 0, 255);     // Red for enemies
+                
+                draw->AddCircleFilled(ImVec2(dotX, dotY), 3.f, dotColor);
+            }
+        }
+        
+        // Label
+        draw->AddText(ImVec2(radarX + 5, radarY + 5), IM_COL32(255, 255, 255, 200), "RADAR");
+    }
+    
+    // 2. SPECTATOR LIST - Who's watching you
+    if (esp_menu::g_config.spectatorList) {
+        const float listX = 20.f;
+        float listY = g_gameBounds.bottom - 200.f;
+        
+        std::vector<const char*> spectators;
+        
+        // Check each player if they're spectating local player
+        if (snap.localPawn) {
+            for (const auto& p : snap.players) {
+                if (!p.valid || p.health > 0) continue; // Only dead players can spectate
+                
+                // In real implementation, you'd check m_hObserverTarget
+                // For now, we'll show dead players as potential spectators
+                if (p.name[0] != '\0') {
+                    spectators.push_back(p.name);
+                }
+            }
+        }
+        
+        if (!spectators.empty()) {
+            // Background
+            float bgHeight = 30.f + spectators.size() * 18.f;
+            draw->AddRectFilled(
+                ImVec2(listX, listY), 
+                ImVec2(listX + 200.f, listY + bgHeight),
+                IM_COL32(20, 20, 30, 220)
+            );
+            draw->AddRect(
+                ImVec2(listX, listY), 
+                ImVec2(listX + 200.f, listY + bgHeight),
+                IM_COL32(255, 100, 100, 255), 1.5f
+            );
+            
+            // Title
+            draw->AddText(ImVec2(listX + 5, listY + 5), IM_COL32(255, 100, 100, 255), "SPECTATORS");
+            
+            // List spectators
+            listY += 20.f;
+            for (const char* name : spectators) {
+                draw->AddText(ImVec2(listX + 10, listY), IM_COL32(255, 255, 255, 255), name);
+                listY += 18.f;
+            }
+        }
+    }
+    
+    // 3. BOMB TIMER - Show C4 countdown
+    if (esp_menu::g_config.bombTimer) {
+        // In real implementation, you'd read m_flC4Blow and m_bBombPlanted from game state
+        // For demonstration, we'll show a mock timer when bomb is "planted"
+        static bool mockBombPlanted = false; // Replace with actual game state
+        static float mockBombTime = 40.f;    // Replace with actual C4 blow time
+        
+        if (mockBombPlanted && mockBombTime > 0.f) {
+            const float timerX = g_gameBounds.right / 2.f - 100.f;
+            const float timerY = 100.f;
+            
+            // Background
+            draw->AddRectFilled(
+                ImVec2(timerX, timerY), 
+                ImVec2(timerX + 200.f, timerY + 60.f),
+                IM_COL32(30, 10, 10, 230)
+            );
+            draw->AddRect(
+                ImVec2(timerX, timerY), 
+                ImVec2(timerX + 200.f, timerY + 60.f),
+                IM_COL32(255, 0, 0, 255), 2.f
+            );
+            
+            // Title
+            draw->AddText(ImVec2(timerX + 70, timerY + 5), IM_COL32(255, 50, 50, 255), "BOMB");
+            
+            // Time
+            auto timeStr = std::format("{:.1f}s", mockBombTime);
+            auto sz = ImGui::CalcTextSize(timeStr.c_str());
+            draw->AddText(
+                ImVec2(timerX + 100.f - sz.x / 2, timerY + 28), 
+                (mockBombTime < 10.f) ? IM_COL32(255, 0, 0, 255) : IM_COL32(255, 200, 0, 255), 
+                timeStr.c_str()
+            );
+            
+            // Progress bar
+            float progress = mockBombTime / 40.f;
+            draw->AddRectFilled(
+                ImVec2(timerX + 10, timerY + 48), 
+                ImVec2(timerX + 10 + 180.f * progress, timerY + 54),
+                (mockBombTime < 10.f) ? IM_COL32(255, 0, 0, 200) : IM_COL32(255, 150, 0, 200)
+            );
+            
+            mockBombTime -= ImGui::GetIO().DeltaTime; // Mock countdown
+        }
+    }
+    
+    // 4. LOOT ESP - Show valuable weapons on ground
+    if (esp_menu::g_config.lootESP) {
+        // In real implementation, iterate through all entities (not just players)
+        // and filter by entity class (e.g., CBaseWeapon, CC4)
+        // For demonstration, we'll show a concept:
+        
+        struct LootItem {
+            Vec3 pos;
+            int weaponID;
+            const char* name;
+        };
+        
+        std::vector<LootItem> lootItems; // Would be populated from entity list
+        
+        // Mock loot items (in real code, read from memory)
+        // lootItems.push_back({{100, 200, 50}, 9, "AWP"});
+        // lootItems.push_back({{-50, 150, 50}, 7, "AK-47"});
+        
+        for (const auto& item : lootItems) {
+            auto screen = toScreen(item.pos);
+            if (!screen) continue;
+            
+            ImU32 lootColor = ImGui::ColorConvertFloat4ToU32({
+                esp_menu::g_config.lootColor[0], 
+                esp_menu::g_config.lootColor[1], 
+                esp_menu::g_config.lootColor[2], 
+                esp_menu::g_config.lootColor[3]
+            });
+            
+            // Draw icon
+            draw->AddCircleFilled(ImVec2(screen->x, screen->y), 8.f, lootColor);
+            
+            // Draw weapon name
+            auto sz = ImGui::CalcTextSize(item.name);
+            esp::drawOutlinedText(
+                draw, 
+                ImVec2(screen->x - sz.x / 2, screen->y + 12), 
+                lootColor, 
+                item.name
+            );
+        }
+    }
+    
+    // 5. SOUND ESP - Visualize sound events (footsteps, gunshots)
+    if (esp_menu::g_config.soundESP) {
+        // In real implementation, hook game sound events or read sound buffer
+        // For demonstration, show concept:
+        
+        struct SoundEvent {
+            Vec3 pos;
+            const char* type; // "Footstep", "Gunshot", "Reload"
+            float fadeTime;
+        };
+        
+        static std::vector<SoundEvent> soundEvents; // Would be updated from sound hooks
+        
+        // Mock sound event (in real code, hook game sounds)
+        // soundEvents.push_back({{150, 100, 50}, "Footstep", 2.0f});
+        
+        // Render and fade out sound events
+        auto it = soundEvents.begin();
+        while (it != soundEvents.end()) {
+            auto screen = toScreen(it->pos);
+            if (screen) {
+                float alpha = std::clamp(it->fadeTime / 2.f, 0.f, 1.f);
+                ImU32 soundColor = IM_COL32(255, 255, 0, (int)(255 * alpha));
+                
+                // Draw sound wave circles
+                draw->AddCircle(ImVec2(screen->x, screen->y), 20.f * (1.f - alpha), soundColor, 0, 2.f);
+                draw->AddCircle(ImVec2(screen->x, screen->y), 35.f * (1.f - alpha), soundColor, 0, 1.5f);
+                
+                // Draw sound type
+                esp::drawOutlinedText(
+                    draw, 
+                    ImVec2(screen->x - 30, screen->y - 10), 
+                    soundColor, 
+                    it->type
+                );
+            }
+            
+            it->fadeTime -= ImGui::GetIO().DeltaTime;
+            if (it->fadeTime <= 0.f) {
+                it = soundEvents.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
 }
 
