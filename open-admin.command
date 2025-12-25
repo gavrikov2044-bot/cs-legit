@@ -17,8 +17,14 @@ pkill -f "ssh -L 8081" 2>/dev/null
 
 echo "🔐 Connecting to server..."
 
-# Start SSH tunnel in background
-sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no -L 8081:127.0.0.1:8080 -N root@$SERVER &
+# Start SSH tunnel in background with keep-alive
+sshpass -p "$PASSWORD" ssh \
+    -o StrictHostKeyChecking=no \
+    -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=3 \
+    -o TCPKeepAlive=yes \
+    -L 8081:127.0.0.1:8080 \
+    -N root@$SERVER &
 SSH_PID=$!
 
 sleep 3
