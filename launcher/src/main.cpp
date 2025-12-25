@@ -120,6 +120,82 @@ std::string g_displayName = "";
 std::string g_hwid = "";
 
 // ============================================
+// Toast Notification System
+// ============================================
+struct Toast {
+    std::string message;
+    ImVec4 color;
+    float lifetime;
+    float alpha;
+    bool isError;
+};
+
+std::vector<Toast> g_toasts;
+
+void ShowToast(const std::string& message, bool isError = false) {
+    Toast toast;
+    toast.message = message;
+    toast.color = isError ? ImVec4(0.95f, 0.25f, 0.30f, 1.0f) : ImVec4(0.15f, 0.85f, 0.45f, 1.0f);
+    toast.lifetime = 3.0f;
+    toast.alpha = 1.0f;
+    toast.isError = isError;
+    g_toasts.push_back(toast);
+}
+
+void UpdateToasts(float dt) {
+    for (auto it = g_toasts.begin(); it != g_toasts.end();) {
+        it->lifetime -= dt;
+        if (it->lifetime < 0.5f) {
+            it->alpha = it->lifetime / 0.5f;
+        }
+        if (it->lifetime <= 0) {
+            it = g_toasts.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void RenderToasts() {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    ImVec2 ws = ImGui::GetIO().DisplaySize;
+    
+    float y = ws.y - 80.0f;
+    for (auto& toast : g_toasts) {
+        std::string text = toast.message;
+        ImVec2 textSize = ImGui::CalcTextSize(text.c_str());
+        float width = textSize.x + 40.0f;
+        float height = 50.0f;
+        float x = ws.x - width - 20.0f;
+        
+        ImU32 bgCol = ImGui::ColorConvertFloat4ToU32(ImVec4(0.08f, 0.08f, 0.12f, 0.95f * toast.alpha));
+        ImU32 borderCol = ImGui::ColorConvertFloat4ToU32(ImVec4(toast.color.x, toast.color.y, toast.color.z, toast.alpha));
+        ImU32 textCol = ImGui::ColorConvertFloat4ToU32(ImVec4(0.95f, 0.95f, 0.98f, toast.alpha));
+        
+        // Shadow
+        dl->AddRectFilled(ImVec2(x + 2, y + 2), ImVec2(x + width + 2, y + height + 2), IM_COL32(0, 0, 0, (int)(60 * toast.alpha)), 8.0f);
+        
+        // Background
+        dl->AddRectFilled(ImVec2(x, y), ImVec2(x + width, y + height), bgCol, 8.0f);
+        
+        // Left accent bar
+        dl->AddRectFilled(ImVec2(x, y), ImVec2(x + 4, y + height), borderCol, 8.0f, ImDrawFlags_RoundCornersLeft);
+        
+        // Border
+        dl->AddRect(ImVec2(x, y), ImVec2(x + width, y + height), borderCol, 8.0f, 0, 1.5f);
+        
+        // Icon
+        const char* icon = toast.isError ? "X" : "✓";
+        dl->AddText(ImVec2(x + 15, y + 15), borderCol, icon);
+        
+        // Text
+        dl->AddText(ImVec2(x + 35, y + 15), textCol, text.c_str());
+        
+        y -= height + 10.0f;
+    }
+}
+
+// ============================================
 // Theme
 // ============================================
 namespace theme {
@@ -656,12 +732,13 @@ void DoLogin() {
                 FetchGameStatus();
                 g_currentScreen = Screen::Main;
                 g_fadeAlpha = 0.0f;
-                g_successMsg = "Welcome!";
+                ShowToast("Welcome, " + g_displayName + "!", false);
             } else {
-                g_errorMsg = ExtractJson(response, "error");
-                if (g_errorMsg.empty()) {
-                    g_errorMsg = !g_statusMsg.empty() ? g_statusMsg : "Login failed";
+                std::string error = ExtractJson(response, "error");
+                if (error.empty()) {
+                    error = !g_statusMsg.empty() ? g_statusMsg : "Login failed";
                 }
+                ShowToast(error, true);
             }
             
             g_isLoading = false;
@@ -991,6 +1068,137 @@ void DoLogout() {
 // ============================================
 // UI Components
 // ============================================
+
+// Modern Progress Bar with gradient
+void DrawProgressBar(ImDrawList* dl, ImVec2 pos, ImVec2 size, float progress, const char* label = nullptr) {
+    progress = std::clamp(progress, 0.0f, 1.0f);
+    
+    // Background
+    dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), IM_COL32(20, 20, 28, 255), 4.0f);
+    
+    // Progress fill with gradient
+    if (progress > 0.01f) {
+        float fillWidth = size.x * progress;
+        dl->AddRectFilledMultiColor(
+            pos,
+            ImVec2(pos.x + fillWidth, pos.y + size.y),
+            IM_COL32(140, 90, 245, 255),
+            IM_COL32(80, 150, 255, 255),
+            IM_COL32(80, 150, 255, 255),
+            IM_COL32(140, 90, 245, 255)
+        );
+    }
+    
+    // Border
+    dl->AddRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), IM_COL32(60, 60, 80, 180), 4.0f, 0, 1.5f);
+    
+    // Label
+    if (label) {
+        ImVec2 textSize = ImGui::CalcTextSize(label);
+        ImVec2 textPos(pos.x + (size.x - textSize.x) * 0.5f, pos.y + (size.y - textSize.y) * 0.5f);
+        dl->AddText(textPos, IM_COL32(255, 255, 255, 255), label);
+    }
+}
+
+// Animated Loading Spinner
+void DrawSpinner(ImDrawList* dl, ImVec2 center, float radius, ImU32 color, float time) {
+    const int num_segments = 30;
+    float angle_offset = time * 5.0f;
+    
+    for (int i = 0; i < num_segments; ++i) {
+        float angle = (float)i / num_segments * 2.0f * 3.14159f + angle_offset;
+        float alpha = (float)i / num_segments;
+        ImU32 col = IM_COL32(
+            (color >> IM_COL32_R_SHIFT) & 0xFF,
+            (color >> IM_COL32_G_SHIFT) & 0xFF,
+            (color >> IM_COL32_B_SHIFT) & 0xFF,
+            (int)(alpha * 255)
+        );
+        
+        float x = center.x + cosf(angle) * radius;
+        float y = center.y + sinf(angle) * radius;
+        dl->AddCircleFilled(ImVec2(x, y), radius * 0.2f, col);
+    }
+}
+
+// Status Indicator with pulse animation
+void DrawStatusIndicator(ImDrawList* dl, ImVec2 pos, const std::string& status, float pulse) {
+    ImU32 color;
+    const char* text;
+    
+    if (status == "operational") {
+        color = IM_COL32(30, 220, 100, 255);
+        text = "Online";
+    } else if (status == "updating") {
+        color = IM_COL32(255, 180, 0, 255);
+        text = "Updating";
+    } else if (status == "maintenance") {
+        color = IM_COL32(255, 100, 100, 255);
+        text = "Offline";
+    } else {
+        color = IM_COL32(150, 150, 160, 255);
+        text = "Unknown";
+    }
+    
+    // Pulse effect for operational status
+    float pulseRadius = 4.0f;
+    if (status == "operational") {
+        pulseRadius += pulse * 2.0f;
+        ImU32 pulseColor = IM_COL32(30, 220, 100, (int)((1.0f - pulse) * 60));
+        dl->AddCircleFilled(pos, pulseRadius + 2, pulseColor);
+    }
+    
+    // Main dot
+    dl->AddCircleFilled(pos, pulseRadius, color);
+    
+    // Text
+    ImVec2 textPos(pos.x + 12, pos.y - 7);
+    dl->AddText(textPos, IM_COL32(200, 200, 210, 255), text);
+}
+
+// Modern Game Card with gradient and hover effect  
+void DrawGameCard(ImDrawList* dl, ImVec2 pos, ImVec2 size, const GameInfo& game, bool hovered, float pulse) {
+    // Shadow
+    dl->AddRectFilled(
+        ImVec2(pos.x + 3, pos.y + 3),
+        ImVec2(pos.x + size.x + 3, pos.y + size.y + 3),
+        IM_COL32(0, 0, 0, 60),
+        12.0f
+    );
+    
+    // Background with gradient
+    ImU32 bgColor1 = hovered ? IM_COL32(24, 24, 35, 255) : IM_COL32(18, 18, 28, 255);
+    ImU32 bgColor2 = hovered ? IM_COL32(30, 28, 42, 255) : IM_COL32(22, 22, 32, 255);
+    
+    dl->AddRectFilledMultiColor(
+        pos,
+        ImVec2(pos.x + size.x, pos.y + size.y),
+        bgColor1, bgColor1, bgColor2, bgColor2
+    );
+    
+    // Top accent bar (gradient)
+    dl->AddRectFilledMultiColor(
+        pos,
+        ImVec2(pos.x + size.x, pos.y + 4),
+        IM_COL32(140, 90, 245, 255),
+        IM_COL32(80, 150, 255, 255),
+        IM_COL32(80, 150, 255, 255),
+        IM_COL32(140, 90, 245, 255)
+    );
+    
+    // Border with glow on hover
+    ImU32 borderColor = hovered ? IM_COL32(140, 90, 245, 200) : IM_COL32(60, 60, 80, 100);
+    if (hovered) {
+        dl->AddRect(
+            ImVec2(pos.x - 1, pos.y - 1),
+            ImVec2(pos.x + size.x + 1, pos.y + size.y + 1),
+            IM_COL32(140, 90, 245, (int)(pulse * 100)),
+            12.0f, 0, 3.0f
+        );
+    }
+    dl->AddRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), borderColor, 12.0f, 0, 1.5f);
+}
+
 void StyledInput(const char* label, char* buf, size_t size, bool password = false) {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14, 12));
@@ -2125,6 +2333,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
         g_animTimer += dt;
         if (g_currentScreen == Screen::Splash) g_splashTimer += dt;
         
+        // Update toasts
+        UpdateToasts(dt);
+        
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
@@ -2135,6 +2346,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
             case Screen::Register: RenderRegister(); break;
             case Screen::Main: RenderMain(); break;
         }
+        
+        // Render toasts on top
+        RenderToasts();
         
         ImGui::Render();
         const float clear[4] = { 0.04f, 0.04f, 0.06f, 1.0f };
