@@ -45,6 +45,7 @@ typedef LONG NTSTATUS;
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
+#include "esp_menu.hpp"  // NEW: Modern ESP menu
 
 // OMath library for Source Engine
 #include <omath/omath.hpp>
@@ -979,209 +980,40 @@ void LoadConfig(const char* filename) {
 }
 
 // ============================================
-// Menu (hexaPjj style with tabs)
+// Menu (NEW: Using modern esp_menu.hpp)
 // ============================================
-static int g_currentTab = 0;
+
+// Sync old Config with new ESP menu settings
+void SyncMenuSettings() {
+    // Read from esp_menu to old config
+    g_cfg.espEnabled = esp_menu::g_settings.boxESP || esp_menu::g_settings.nameESP || esp_menu::g_settings.healthBar;
+    g_cfg.espBox = esp_menu::g_settings.boxESP;
+    g_cfg.espName = esp_menu::g_settings.nameESP;
+    g_cfg.espHealth = esp_menu::g_settings.healthBar;
+    g_cfg.espDistance = esp_menu::g_settings.distanceESP;
+    g_cfg.espSkeleton = esp_menu::g_settings.skeletonESP;
+    g_cfg.espSnaplines = esp_menu::g_settings.snaplines;
+    g_cfg.espMaxDistance = esp_menu::g_settings.maxDistance;
+    
+    // Sync colors
+    for (int i = 0; i < 4; i++) {
+        g_cfg.colorEnemy[i] = esp_menu::g_settings.enemyColor[i];
+        g_cfg.colorTeam[i] = esp_menu::g_settings.teamColor[i];
+    }
+}
 
 void renderMenu() {
-    if (!g_cfg.showMenu) return;
+    // Handle hotkeys
+    esp_menu::HandleHotkeys();
     
-    ImGui::SetNextWindowSize(ImVec2(520, 400), ImGuiCond_FirstUseEver);
-    ImGui::Begin("EXTERNAL v1.0.0", &g_cfg.showMenu, 
-        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoResize);
+    // Use new modern ESP menu
+    esp_menu::RenderMenu();
     
-    ImDrawList* windowDraw = ImGui::GetWindowDrawList();
-    ImVec2 wp = ImGui::GetWindowPos();
-    ImVec2 ws = ImGui::GetWindowSize();
+    // Sync settings after rendering
+    SyncMenuSettings();
     
-    // Gradient header line
-    windowDraw->AddRectFilledMultiColor(
-        ImVec2(wp.x + 1, wp.y + 24), ImVec2(wp.x + ws.x - 1, wp.y + 26),
-        IM_COL32(130, 70, 200, 255), IM_COL32(70, 130, 230, 255),
-        IM_COL32(70, 130, 230, 255), IM_COL32(130, 70, 200, 255)
-    );
-    
-    // ========== LEFT TABS ==========
-    ImGui::BeginChild("Tabs", ImVec2(90, -50), true);
-    
-    // Tab buttons
-    ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.5f, 0.5f));
-    
-    auto tabButton = [](const char* label, int idx, int& current) {
-        ImGui::PushStyleColor(ImGuiCol_Button, current == idx ? 
-            ImVec4(0.35f, 0.28f, 0.55f, 1.f) : ImVec4(0.18f, 0.16f, 0.25f, 1.f));
-        if (ImGui::Button(label, ImVec2(74, 32))) current = idx;
-        ImGui::PopStyleColor();
-        ImGui::Spacing();
-    };
-    
-    ImGui::Spacing();
-    tabButton("ESP", 0, g_currentTab);
-    tabButton("Config", 1, g_currentTab);
-    
-    ImGui::PopStyleVar();
-    
-    // Status at bottom of tabs
-    ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 45);
-    ImGui::Separator();
-    if (g_mem.ok()) {
-        ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.4f, 1.f), " Online");
-        std::lock_guard<std::mutex> lock(g_mutex);
-        ImGui::TextDisabled(" %zu players", g_entities.size());
-    } else {
-        ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.f), " Offline");
-    }
-    
-    ImGui::EndChild();
-    
-    // ========== MAIN CONTENT ==========
-    ImGui::SameLine();
-    ImGui::BeginChild("Content", ImVec2(270, -50), true);
-    
-    if (g_currentTab == 0) {
-        // ===== ESP TAB =====
-        ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(0.4f, 0.9f, 0.5f, 1.f));
-        ImGui::Checkbox(" Enable ESP", &g_cfg.espEnabled);
-        ImGui::PopStyleColor();
-        
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        
-        ImGui::TextColored(ImVec4(0.7f, 0.6f, 0.9f, 1.f), "Visuals");
-        ImGui::Spacing();
-        
-        ImGui::Checkbox("Box", &g_cfg.espBox);
-        if (g_cfg.espBox) { ImGui::SameLine(120); ImGui::Checkbox("Cornered", &g_cfg.espCorneredBox); }
-        ImGui::Checkbox("Fill", &g_cfg.espFill);
-        if (g_cfg.espFill) {
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(60);
-            ImGui::SliderFloat("##fillop", &g_cfg.espFillOpacity, 5.f, 50.f, "%.0f%%");
-        }
-        ImGui::Checkbox("Skeleton", &g_cfg.espSkeleton);
-        ImGui::Checkbox("Head Dot", &g_cfg.espHeadDot);
-        if (g_cfg.espHeadDot) {
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(100);
-            ImGui::SliderFloat("##headsz", &g_cfg.espHeadDotSize, 1.0f, 5.0f, "Sz: %.1f");
-        }
-        ImGui::Checkbox("Health Bar", &g_cfg.espHealth);
-        ImGui::Checkbox("Armor Bar", &g_cfg.espArmor);
-        ImGui::Checkbox("Name", &g_cfg.espName);
-        ImGui::Checkbox("Distance", &g_cfg.espDistance);
-        ImGui::Checkbox("Snaplines", &g_cfg.espSnaplines);
-        ImGui::Checkbox("Crosshair", &g_cfg.espSniperCrosshair);
-        ImGui::Checkbox("Outlined Text", &g_cfg.espOutlinedText);
-        
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        
-        ImGui::TextColored(ImVec4(0.7f, 0.6f, 0.9f, 1.f), "Filters");
-        ImGui::Checkbox("Enemy Only", &g_cfg.espEnemyOnly);
-        ImGui::SetNextItemWidth(160);
-        ImGui::SliderFloat("Max Range", &g_cfg.espMaxDistance, 0.f, 1000.f, "%.0f m");
-        
-        // NO prediction - causes instability on different PCs
-        
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        
-        ImGui::TextColored(ImVec4(0.7f, 0.6f, 0.9f, 1.f), "Colors");
-        ImGui::ColorEdit3("##enemy", g_cfg.colorEnemy, ImGuiColorEditFlags_NoInputs);
-        ImGui::SameLine(); ImGui::Text("Enemy");
-        ImGui::SameLine(140);
-        ImGui::ColorEdit3("##team", g_cfg.colorTeam, ImGuiColorEditFlags_NoInputs);
-        ImGui::SameLine(); ImGui::Text("Team");
-        if (g_cfg.espSkeleton) {
-            ImGui::ColorEdit4("##skel", g_cfg.colorSkeleton, ImGuiColorEditFlags_NoInputs);
-            ImGui::SameLine(); ImGui::Text("Skeleton");
-        }
-        if (g_cfg.espHeadDot) {
-            ImGui::ColorEdit4("##headdot", g_cfg.colorHeadDot, ImGuiColorEditFlags_NoInputs);
-            ImGui::SameLine(); ImGui::Text("Head Dot");
-        }
-        
-    } else if (g_currentTab == 1) {
-        // ===== CONFIG TAB =====
-        ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.f), "Config");
-        ImGui::Separator();
-        ImGui::Spacing();
-        
-        if (ImGui::Button("Save Config", ImVec2(120, 28))) {
-            SaveConfig("config.bin");
-        }
-        ImGui::Spacing();
-        if (ImGui::Button("Load Config", ImVec2(120, 28))) {
-            LoadConfig("config.bin");
-        }
-        ImGui::Spacing();
-        if (ImGui::Button("Reset Default", ImVec2(120, 28))) {
-            g_cfg = Config();
-        }
-        
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        
-        ImGui::TextColored(ImVec4(0.7f, 0.6f, 0.9f, 1.f), "Performance");
-        
-        // DirectComposition status
-        if (g_useDirectComposition) {
-            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.f), "[DirectComposition ACTIVE - Unlimited FPS!]");
-        } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.f), "[Classic Overlay - 60 FPS limited by DWM]");
-        }
-        
-        ImGui::Checkbox("VSync Overlay", &g_cfg.vsyncOverlay);
-        if (!g_cfg.vsyncOverlay) {
-            ImGui::SetNextItemWidth(120);
-            ImGui::SliderInt("FPS Limit", &g_cfg.fpsLimit, 0, 300, g_cfg.fpsLimit == 0 ? "Unlimited" : "%d");
-        }
-    }
-    
-    ImGui::EndChild();
-    
-    // ========== PREVIEW (only on ESP tab) ==========
-    if (g_currentTab == 0) {
-        ImGui::SameLine();
-        ImGui::BeginChild("Preview", ImVec2(0, -50), true);
-        
-        ImGui::TextColored(ImVec4(0.55f, 0.5f, 0.7f, 1.f), " Preview");
-        ImGui::Separator();
-        
-        ImVec2 pPos = ImGui::GetWindowPos();
-        ImVec2 pSize = ImGui::GetWindowSize();
-        ImDrawList* draw = ImGui::GetWindowDrawList();
-        
-        // Preview background (fully opaque to hide game textures)
-        float bgTop = pPos.y + 26;
-        draw->AddRectFilled(
-            ImVec2(pPos.x + 2, bgTop), 
-            ImVec2(pPos.x + pSize.x - 2, pPos.y + pSize.y - 2), 
-            IM_COL32(15, 15, 20, 255), 3.f
-        );
-        
-        // Draw preview centered
-        float cx = pPos.x + pSize.x / 2.f;
-        float cy = bgTop + (pSize.y - 30) / 2.f + 5.f;
-        esp::drawPreview(draw, cx, cy, g_cfg);
-        
-        ImGui::EndChild();
-    }
-    
-    // ========== FOOTER ==========
-    ImGui::SetCursorPosY(ws.y - 42);
-    ImGui::Separator();
-    ImGui::Spacing();
-    ImGui::TextDisabled(" INSERT - Menu | END - Exit");
-    ImGui::SameLine(ws.x - 80);
-    if (ImGui::Button("Exit", ImVec2(60, 24))) g_running = false;
-    
-    ImGui::End();
+    // Update g_cfg.showMenu from esp_menu
+    g_cfg.showMenu = esp_menu::g_menuOpen;
 }
 
 // ============================================
@@ -1501,13 +1333,16 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         }
         if (!g_running) break;
         
-        // Toggle menu with INSERT
-        if (GetAsyncKeyState(VK_INSERT) & 1) {
-            g_cfg.showMenu = !g_cfg.showMenu;
+        // Toggle menu with INSERT (handled by esp_menu::HandleHotkeys now)
+        // Just sync the window style based on menu state
+        static bool lastMenuState = esp_menu::g_menuOpen;
+        if (esp_menu::g_menuOpen != lastMenuState) {
+            lastMenuState = esp_menu::g_menuOpen;
+            g_cfg.showMenu = esp_menu::g_menuOpen;
             
             // Update window style for click-through
             auto ex = GetWindowLongPtr(g_hwnd, GWL_EXSTYLE);
-            if (g_cfg.showMenu) {
+            if (esp_menu::g_menuOpen) {
                 // Menu visible - accept input (remove WS_EX_TRANSPARENT)
                 SetWindowLongPtr(g_hwnd, GWL_EXSTYLE, ex & ~WS_EX_TRANSPARENT);
             } else {
@@ -1522,7 +1357,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             
             // Update ImGui mouse handling
             ImGuiIO& ioRef = ImGui::GetIO();
-            if (g_cfg.showMenu) {
+            if (esp_menu::g_menuOpen) {
                 ioRef.ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
                 ioRef.MouseDrawCursor = true;
             } else {

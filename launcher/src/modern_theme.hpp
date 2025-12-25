@@ -36,6 +36,21 @@ namespace theme {
     constexpr ImVec4 text_accent  = ImVec4(0.54f, 0.17f, 0.89f, 1.00f); // #8a2be2
     
     // ============================================
+    // Backwards Compatibility Aliases (for old RenderMainOld)
+    // ============================================
+    constexpr ImVec4 bg           = bg_deep;
+    constexpr ImVec4 sidebar      = ImVec4(0.06f, 0.06f, 0.09f, 1.0f);
+    constexpr ImVec4 surface      = ImVec4(0.08f, 0.08f, 0.12f, 1.0f);
+    constexpr ImVec4 surfaceHover = ImVec4(0.12f, 0.12f, 0.18f, 1.0f);
+    constexpr ImVec4 border       = ImVec4(0.15f, 0.15f, 0.22f, 1.0f);
+    constexpr ImVec4 accent       = primary;
+    constexpr ImVec4 accentHover  = primary_hover;
+    constexpr ImVec4 textSec      = text_secondary;
+    constexpr ImVec4 textDim      = text_disabled;
+    constexpr ImU32  gradientA    = IM_COL32(140, 90, 245, 255);
+    constexpr ImU32  gradientB    = IM_COL32(60, 180, 255, 255);
+    
+    // ============================================
     // Apply Modern Theme
     // ============================================
     inline void ApplyModernTheme() {

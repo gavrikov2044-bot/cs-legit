@@ -89,14 +89,25 @@ jobs:
             
             $versionJson | Out-File -FilePath "build/version.json" -Encoding UTF8
             
-            curl.exe -X POST "$env:SERVER_URL/api/admin/ci/upload" `
+            # Use direct IP for reliability (avoid DNS issues)
+            $uploadUrl = $env:SERVER_URL -replace 'single-project\.duckdns\.org', '138.124.0.8'
+            $uploadUrl = $uploadUrl -replace 'single-project\.ddns\.net', '138.124.0.8'
+            Write-Host "Upload URL: $uploadUrl"
+            
+            curl.exe -X POST "$uploadUrl/api/admin/ci/upload" `
               -H "X-CI-API-Key: $env:CI_API_KEY" `
+              -H "Host: single-project.ddns.net" `
               -F "game_id=cs2" `
               -F "file_type=externa" `
               -F "version=${{ env.VERSION }}" `
               -F "file=@$($exe.FullName)"
               
-            Write-Host "✅ Uploaded to server!"
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "✅ Uploaded to server!"
+            } else {
+              Write-Host "❌ Upload failed with exit code $LASTEXITCODE"
+              exit $LASTEXITCODE
+            }
           } else {
             Write-Host "❌ No exe found"
             exit 1
