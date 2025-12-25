@@ -138,13 +138,22 @@ const HOST = process.env.HOST || '0.0.0.0';
 // Start Telegram monitoring
 const { startMonitoring } = require('./services/telegramMonitor');
 
-app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST, () => {
     console.log(`🚀 Launcher Server running on http://${HOST}:${PORT}`);
     console.log(`📁 Storage: ${path.resolve(process.env.STORAGE_PATH || '../storage')}`);
     console.log(`🌐 Public website: http://single-project.duckdns.org`);
+    
+    // Initialize WebSocket for real-time updates
+    const websocket = require('./services/websocket');
+    websocket.initialize(server);
+    console.log(`🔌 WebSocket server started on ws://${HOST}:${PORT}/ws`);
     
     // Start monitoring @cstwoupdate for CS2 updates
     startMonitoring();
     console.log(`📱 Telegram monitor started - watching @cstwoupdate`);
 });
+
+// Export for WebSocket broadcasting
+module.exports = { app, server };
+
 

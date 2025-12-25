@@ -134,6 +134,10 @@ router.post('/ci/upload', verifyCiApiKey, upload.single('file'), (req, res) => {
         
         console.log(`[CI] Uploaded ${game_id} v${version} (${commit_sha || 'no-sha'})`);
         
+        // Broadcast new version via WebSocket
+        const websocket = require('../services/websocket');
+        websocket.notifyVersionUpdate(game_id, version);
+        
         res.status(201).json({
             success: true,
             message: 'Build uploaded',
@@ -709,6 +713,11 @@ router.post('/games/:id/status', (req, res) => {
     `).run(gameId, status, message || null);
     
     console.log(`[Admin] Set ${gameId} status to: ${status}`);
+    
+    // Broadcast status change via WebSocket
+    const websocket = require('../services/websocket');
+    websocket.notifyStatusChange(gameId, status, message);
+    
     res.json({ success: true, status, message: `Status set to ${status}` });
 });
 
@@ -731,6 +740,11 @@ router.post('/games/:id/toggle', (req, res) => {
     `).run(gameId, newStatus, newMessage);
     
     console.log(`[Admin] Toggled ${gameId} to: ${newStatus}`);
+    
+    // Broadcast toggle via WebSocket
+    const websocket = require('../services/websocket');
+    websocket.notifyStatusChange(gameId, newStatus, newMessage);
+    
     res.json({ success: true, status: newStatus, message: newMessage });
 });
 
