@@ -32,6 +32,8 @@
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
 #include "protection.hpp"
+#include "modern_theme.hpp"
+#include "new_ui.hpp"
 
 namespace fs = std::filesystem;
 
@@ -52,8 +54,8 @@ bool g_bypassVM = false; // Set to true for development
     #define LAUNCHER_VERSION "2.0.50-local"
 #endif
 
-#define WINDOW_WIDTH 700
-#define WINDOW_HEIGHT 500
+#define WINDOW_WIDTH 1200
+#define WINDOW_HEIGHT 700
 // Rebuild trigger v2
 
 // Use direct IP for fast connection (Host header added for nginx)
@@ -1534,7 +1536,7 @@ void RenderRegister() {
     ImGui::PopStyleColor();
 }
 
-void RenderMain() {
+void RenderMainOld() {
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     ImVec2 ws = ImGui::GetIO().DisplaySize;
     
@@ -2200,6 +2202,169 @@ void RenderMain() {
     ImGui::PopStyleColor();
 }
 
+// ============================================
+// NEW MODERN UI - Tab-based interface
+// ============================================
+void RenderMain() {
+    ImGui::SetNextWindowSize(ImVec2((float)WINDOW_WIDTH, (float)WINDOW_HEIGHT));
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, theme::bg_deep);
+    
+    ImGui::Begin("##EXTERNA_MAIN", nullptr, 
+        ImGuiWindowFlags_NoTitleBar | 
+        ImGuiWindowFlags_NoResize | 
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoCollapse);
+    
+    // Get draw list for particles
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    ImVec2 windowPos = ImGui::GetWindowPos();
+    
+    // Render particles first (background layer)
+    ui::RenderParticles(draw, windowPos);
+    
+    // Top bar
+    ui::RenderTopBar(g_username[0] ? g_username : "Guest");
+    
+    // Main layout: Sidebar + Content
+    ImGui::SetCursorPos(ImVec2(0, 60));
+    ImGui::BeginGroup();
+    {
+        // Sidebar navigation
+        ui::RenderSidebar();
+        
+        ImGui::SameLine();
+        
+        // Content area based on selected tab
+        ImGui::BeginChild("##content_area", ImVec2(1120, 640), false);
+        
+        switch (ui::g_currentTab) {
+            case ui::Tab::Home: {
+                ui::RenderHomeTab({});
+                
+                // Show selected game info in Home tab
+                if (g_selectedGame >= 0 && g_selectedGame < (int)g_games.size()) {
+                    GameInfo& game = g_games[g_selectedGame];
+                    
+                    ImGui::SetCursorPos(ImVec2(40, 200));
+                    ImGui::BeginChild("##game_details", ImVec2(700, 400), true);
+                    
+                    // Game header
+                    ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
+                    ImGui::TextColored(theme::text, "%s %s", game.icon.c_str(), game.name.c_str());
+                    ImGui::PopFont();
+                    
+                    ImGui::Spacing();
+                    ImGui::TextColored(theme::text_secondary, "%s", game.description.c_str());
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    
+                    // Status indicator
+                    theme::StatusIndicator(
+                        g_gameStatusMsg.c_str(),
+                        g_gameStatus == "operational",
+                        g_gameStatus == "operational" ? theme::success : theme::warning
+                    );
+                    
+                    ImGui::Spacing();
+                    
+                    // Version info
+                    ImGui::TextColored(theme::text_secondary, "Version: ");
+                    ImGui::SameLine();
+                    ImGui::TextColored(theme::text, "%s", game.version.c_str());
+                    
+                    // License status
+                    ImGui::TextColored(theme::text_secondary, "License: ");
+                    ImGui::SameLine();
+                    if (game.hasLicense) {
+                        if (game.daysRemaining < 0) {
+                            ImGui::TextColored(theme::success, "Lifetime");
+                        } else {
+                            ImGui::TextColored(theme::success, "Active (%d days left)", game.daysRemaining);
+                        }
+                    } else {
+                        ImGui::TextColored(theme::error, "Not activated");
+                    }
+                    
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    
+                    // Action buttons
+                    if (game.hasLicense && g_gameStatus == "operational") {
+                        if (g_cheatRunning) {
+                            ImGui::PushStyleColor(ImGuiCol_Button, theme::error);
+                            if (ImGui::Button("🛑 STOP CHEAT", ImVec2(200, 50))) {
+                                StopCheat();
+                            }
+                            ImGui::PopStyleColor();
+                        } else {
+                            ImGui::PushStyleColor(ImGuiCol_Button, theme::success);
+                            if (ImGui::Button("🚀 LAUNCH", ImVec2(200, 50))) {
+                                LaunchCheat(game);
+                            }
+                            ImGui::PopStyleColor();
+                        }
+                    } else if (!game.hasLicense) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, theme::warning);
+                        ImGui::Button("⚠️ LICENSE REQUIRED", ImVec2(200, 50));
+                        ImGui::PopStyleColor();
+                    } else {
+                        ImGui::PushStyleColor(ImGuiCol_Button, theme::text_secondary);
+                        ImGui::Button("⏸️ NOT AVAILABLE", ImVec2(200, 50));
+                        ImGui::PopStyleColor();
+                    }
+                    
+                    // Download progress
+                    if (g_isDownloading) {
+                        ImGui::Spacing();
+                        theme::ProgressBar(g_downloadProgress, ImVec2(400, 30), "Downloading...");
+                    }
+                    
+                    // Loading spinner
+                    if (g_isLoading) {
+                        ImGui::SameLine();
+                        theme::Spinner("##loading", 15, 6, theme::primary);
+                    }
+                    
+                    ImGui::EndChild();
+                }
+                break;
+            }
+            
+            case ui::Tab::Games:
+                ui::RenderGamesTab();
+                break;
+            
+            case ui::Tab::Stats:
+                ui::RenderStatsTab();
+                break;
+            
+            case ui::Tab::Settings:
+                ui::RenderSettingsTab();
+                break;
+            
+            case ui::Tab::Profile:
+                ui::RenderProfileTab(g_username);
+                break;
+            
+            case ui::Tab::News:
+                ui::RenderNewsTab();
+                break;
+        }
+        
+        ImGui::EndChild();
+    }
+    ImGui::EndGroup();
+    
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+}
+
 void SetupStyle() {
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowRounding = 0;
@@ -2277,7 +2442,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
     
-    SetupStyle();
+    // Apply modern theme
+    theme::ApplyModernTheme();
+    
+    // Initialize particle system
+    ui::InitParticles(30);
+    
     g_hwid = GetHWID();
     
     // Check for updates on startup
@@ -2336,6 +2506,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
         // Update toasts
         UpdateToasts(dt);
         
+        // Update particles
+        ui::UpdateParticles(dt);
+        
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
@@ -2344,7 +2517,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
             case Screen::Splash: RenderSplash(); break;
             case Screen::Login: RenderLogin(); break;
             case Screen::Register: RenderRegister(); break;
-            case Screen::Main: RenderMain(); break;
+            case Screen::Main: RenderMain(); break; // Now using NEW modern UI
         }
         
         // Render toasts on top
