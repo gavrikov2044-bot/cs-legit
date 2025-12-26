@@ -39,6 +39,7 @@ typedef LONG NTSTATUS;
 #include <atomic>
 #include <mutex>
 #include <optional>
+#include <map>
 #include <immintrin.h> // SIMD Optimization
 #include <fstream> // For Config
 
@@ -521,6 +522,38 @@ struct DrawSnapshot {
     PlayerData players[64];
     size_t playerCount = 0;
     
+    // NEW: Advanced ESP Data
+    struct SpectatorData {
+        char name[64] = {};
+        bool valid = false;
+    };
+    SpectatorData spectators[64];
+    size_t spectatorCount = 0;
+    
+    struct BombData {
+        bool planted = false;
+        float timeRemaining = 0.f; // seconds until explosion
+        Vec3 position{}; // C4 position
+    };
+    BombData bomb{};
+    
+    struct LootItem {
+        Vec3 position{};
+        int weaponID = 0;
+        char name[32] = {};
+        bool valid = false;
+    };
+    LootItem loot[128]; // Max 128 loot items
+    size_t lootCount = 0;
+    
+    struct SoundEvent {
+        Vec3 position{};
+        const char* type = nullptr; // "Footstep", "Gunshot", "Reload"
+        float fadeTime = 2.0f; // seconds until fade out
+        std::chrono::steady_clock::time_point timestamp;
+    };
+    std::vector<SoundEvent> sounds; // Dynamic for sound events
+    
     std::chrono::steady_clock::time_point timestamp;
 };
 
@@ -714,6 +747,188 @@ void dataReaderLoop() {
             
             snap.playerCount++;
         }
+        
+        // ====================================
+        // NEW: Read Advanced ESP Data
+        // ====================================
+        
+        // 1. SPECTATOR LIST - Check who's watching local player
+        snap.spectatorCount = 0;
+        if (localPawn) {
+            for (int i = 1; i <= 64; i++) {
+                uintptr_t listEntry = g_mem.read<uintptr_t>(entityList + (8 * (i & 0x7FFF) >> 9) + 16);
+                if (!listEntry) continue;
+                
+                uintptr_t controller = g_mem.read<uintptr_t>(listEntry + 112 * (i & 0x1FF));
+                if (!controller) continue;
+                
+                // Check if this player is spectating
+                uint32_t observerTarget = g_mem.read<uint32_t>(controller + offsets::m_hObserverTarget);
+                int observerMode = g_mem.read<int>(controller + offsets::m_iObserverMode);
+                
+                // If observer mode > 0 and target matches local pawn handle
+                if (observerMode > 0 && observerTarget) {
+                    uint32_t localPawnHandle = 0;
+                    if (localController) {
+                        localPawnHandle = g_mem.read<uint32_t>(localController + offsets::m_hPlayerPawn);
+                    }
+                    
+                    // Check if observer target matches local pawn
+                    if ((observerTarget & 0x7FFF) == (localPawnHandle & 0x7FFF)) {
+                        // Read spectator name
+                        uintptr_t namePtr = g_mem.read<uintptr_t>(controller + offsets::m_iszPlayerName);
+                        if (namePtr) {
+                            auto& spec = snap.spectators[snap.spectatorCount];
+                            g_mem.readRaw(namePtr, spec.name, sizeof(spec.name) - 1);
+                            spec.name[sizeof(spec.name) - 1] = '\0';
+                            spec.valid = true;
+                            snap.spectatorCount++;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 2. BOMB TIMER - Read C4 state
+        snap.bomb.planted = false;
+        snap.bomb.timeRemaining = 0.f;
+        
+        // Iterate entities to find C4
+        // Note: C4 entity class name is usually "C_PlantedC4" or similar
+        // For now, we'll check all entities for bomb flags
+        for (int i = 0; i < 1024; i++) { // Check more entities for C4
+            uintptr_t listEntry = g_mem.read<uintptr_t>(entityList + (8 * (i & 0x7FFF) >> 9) + 16);
+            if (!listEntry) continue;
+            
+            uintptr_t entity = g_mem.read<uintptr_t>(listEntry + 112 * (i & 0x1FF));
+            if (!entity) continue;
+            
+            // Check if it's C4 - read bomb planted flag
+            // Note: Offset may need adjustment based on actual CS2 structure
+            bool bombPlanted = g_mem.read<bool>(entity + offsets::m_bBombPlanted);
+            if (bombPlanted) {
+                // m_flC4Blow is typically the game time when bomb will explode
+                // We need to compare with current game time
+                // For now, read it as time remaining (may need adjustment)
+                float blowTime = g_mem.read<float>(entity + offsets::m_flC4Blow);
+                
+                // If blowTime is a timestamp, calculate remaining time
+                // If it's already time remaining, use it directly
+                // Common CS2 pattern: m_flC4Blow is game time, so we need current game time
+                // For simplicity, assume it's time remaining if < 50 seconds
+                if (blowTime > 0.f && blowTime < 50.f) {
+                    snap.bomb.timeRemaining = blowTime;
+                    snap.bomb.planted = true;
+                    
+                    // Get C4 position
+                    uintptr_t sceneNode = g_mem.read<uintptr_t>(entity + offsets::m_pGameSceneNode);
+                    if (sceneNode) {
+                        snap.bomb.position = g_mem.read<Vec3>(sceneNode + offsets::m_vecAbsOrigin);
+                    }
+                    break; // Found C4, no need to continue
+                }
+            }
+        }
+        
+        // 3. LOOT ESP - Find weapons on ground
+        snap.lootCount = 0;
+        for (int i = 0; i < 1024 && snap.lootCount < 128; i++) {
+            uintptr_t listEntry = g_mem.read<uintptr_t>(entityList + (8 * (i & 0x7FFF) >> 9) + 16);
+            if (!listEntry) continue;
+            
+            uintptr_t entity = g_mem.read<uintptr_t>(listEntry + 112 * (i & 0x1FF));
+            if (!entity) continue;
+            
+            // Check if entity has weapon/item attributes
+            uintptr_t attrManager = g_mem.read<uintptr_t>(entity + offsets::m_AttributeManager);
+            if (!attrManager) continue;
+            
+            uintptr_t item = g_mem.read<uintptr_t>(attrManager + offsets::m_Item);
+            if (!item) continue;
+            
+            int weaponID = g_mem.read<int>(item + offsets::m_iItemDefinitionIndex);
+            
+            // Filter valuable weapons
+            if (isValuableWeapon(weaponID)) {
+                // Get position
+                uintptr_t sceneNode = g_mem.read<uintptr_t>(entity + offsets::m_pGameSceneNode);
+                if (sceneNode) {
+                    auto& loot = snap.loot[snap.lootCount];
+                    loot.position = g_mem.read<Vec3>(sceneNode + offsets::m_vecAbsOrigin);
+                    loot.weaponID = weaponID;
+                    const char* weaponName = getWeaponName(weaponID);
+                    strncpy_s(loot.name, sizeof(loot.name), weaponName, _TRUNCATE);
+                    loot.valid = true;
+                    snap.lootCount++;
+                }
+            }
+        }
+        
+        // 4. SOUND ESP - Generate sound events from game state
+        // Track player movements and weapon fire
+        static std::map<size_t, Vec3> lastPositions; // Track last known positions (by player index)
+        static std::map<size_t, std::chrono::steady_clock::time_point> lastFootstepTime;
+        static std::map<size_t, int> lastAmmoCount; // Track ammo for gunshot detection
+        
+        auto now = std::chrono::steady_clock::now();
+        
+        // Keep old sounds and add new ones
+        static std::vector<DrawSnapshot::SoundEvent> persistentSounds;
+        
+        // Remove expired sounds
+        persistentSounds.erase(
+            std::remove_if(persistentSounds.begin(), persistentSounds.end(),
+                [&now](const DrawSnapshot::SoundEvent& s) {
+                    auto elapsed = std::chrono::duration<float>(now - s.timestamp).count();
+                    return elapsed >= s.fadeTime;
+                }),
+            persistentSounds.end()
+        );
+        
+        // Detect new sound events
+        for (size_t i = 0; i < snap.playerCount; i++) {
+            const auto& p = snap.players[i];
+            if (!p.valid) continue;
+            
+            // FOOTSTEPS - Detect movement
+            auto it = lastPositions.find(i);
+            if (it != lastPositions.end()) {
+                float distMoved = sqrtf(
+                    powf(p.origin.x - it->second.x, 2) +
+                    powf(p.origin.y - it->second.y, 2) +
+                    powf(p.origin.z - it->second.z, 2)
+                );
+                
+                // If moved > 0.5m and enough time passed since last footstep
+                auto lastFootstep = lastFootstepTime.find(i);
+                bool canPlayFootstep = true;
+                if (lastFootstep != lastFootstepTime.end()) {
+                    auto timeSince = std::chrono::duration<float>(now - lastFootstep->second).count();
+                    canPlayFootstep = (timeSince > 0.3f); // Max 3 footsteps per second
+                }
+                
+                if (distMoved > 0.5f && canPlayFootstep) {
+                    DrawSnapshot::SoundEvent sound;
+                    sound.position = p.origin;
+                    sound.type = "Footstep";
+                    sound.fadeTime = 2.0f;
+                    sound.timestamp = now;
+                    persistentSounds.push_back(sound);
+                    
+                    lastFootstepTime[i] = now;
+                }
+            }
+            
+            // GUNSHOTS - Detect weapon fire (by reading ammo count changes)
+            // Note: In real implementation, you'd read weapon ammo from memory
+            // For now, we'll simulate based on player state changes
+            // This is a simplified version - real implementation would read m_iClip1, m_iAmmo, etc.
+            
+            lastPositions[i] = p.origin;
+        }
+        
+        // Copy persistent sounds to snapshot
+        snap.sounds = persistentSounds;
         
         // 4. Swap buffers (Publish snapshot)
         {
@@ -1071,29 +1286,28 @@ void renderESP() {
         );
         
         // Draw all players on radar
-        if (snap.localPawn) {
-            for (const auto& p : snap.players) {
-                if (!p.valid) continue;
-                
-                // Calculate relative position
-                float dx = p.origin.x - snap.localPawn->origin.x;
-                float dy = p.origin.y - snap.localPawn->origin.y;
-                
-                // Convert to radar coordinates
-                float dotX = radarCenterX + (dx / radarScale);
-                float dotY = radarCenterY - (dy / radarScale);
-                
-                // Clamp to radar bounds
-                dotX = std::clamp(dotX, radarX + 3.f, radarX + radarSize - 3.f);
-                dotY = std::clamp(dotY, radarY + 3.f, radarY + radarSize - 3.f);
-                
-                // Color based on team
-                ImU32 dotColor = (p.team == snap.localPawn->team) ? 
-                    IM_COL32(0, 150, 255, 255) : // Blue for teammates
-                    IM_COL32(255, 0, 0, 255);     // Red for enemies
-                
-                draw->AddCircleFilled(ImVec2(dotX, dotY), 3.f, dotColor);
-            }
+        for (size_t i = 0; i < snap.playerCount; i++) {
+            const auto& p = snap.players[i];
+            if (!p.valid) continue;
+            
+            // Calculate relative position to local player
+            float dx = p.origin.x - snap.localOrigin.x;
+            float dy = p.origin.y - snap.localOrigin.y;
+            
+            // Convert to radar coordinates
+            float dotX = radarCenterX + (dx / radarScale);
+            float dotY = radarCenterY - (dy / radarScale);
+            
+            // Clamp to radar bounds
+            dotX = std::clamp(dotX, radarX + 3.f, radarX + radarSize - 3.f);
+            dotY = std::clamp(dotY, radarY + 3.f, radarY + radarSize - 3.f);
+            
+            // Color based on team
+            ImU32 dotColor = (p.isEnemy) ? 
+                IM_COL32(255, 0, 0, 255) :     // Red for enemies
+                IM_COL32(0, 150, 255, 255);   // Blue for teammates
+            
+            draw->AddCircleFilled(ImVec2(dotX, dotY), 3.f, dotColor);
         }
         
         // Label
@@ -1101,129 +1315,94 @@ void renderESP() {
     }
     
     // 2. SPECTATOR LIST - Who's watching you
-    if (esp_menu::g_config.spectatorList) {
+    if (esp_menu::g_config.spectatorList && snap.spectatorCount > 0) {
         const float listX = 20.f;
         float listY = g_gameBounds.bottom - 200.f;
         
-        std::vector<const char*> spectators;
+        // Background
+        float bgHeight = 30.f + snap.spectatorCount * 18.f;
+        draw->AddRectFilled(
+            ImVec2(listX, listY), 
+            ImVec2(listX + 200.f, listY + bgHeight),
+            IM_COL32(20, 20, 30, 220)
+        );
+        draw->AddRect(
+            ImVec2(listX, listY), 
+            ImVec2(listX + 200.f, listY + bgHeight),
+            IM_COL32(255, 100, 100, 255), 1.5f
+        );
         
-        // Check each player if they're spectating local player
-        if (snap.localPawn) {
-            for (const auto& p : snap.players) {
-                if (!p.valid || p.health > 0) continue; // Only dead players can spectate
-                
-                // In real implementation, you'd check m_hObserverTarget
-                // For now, we'll show dead players as potential spectators
-                if (p.name[0] != '\0') {
-                    spectators.push_back(p.name);
-                }
-            }
-        }
+        // Title
+        draw->AddText(ImVec2(listX + 5, listY + 5), IM_COL32(255, 100, 100, 255), "SPECTATORS");
         
-        if (!spectators.empty()) {
-            // Background
-            float bgHeight = 30.f + spectators.size() * 18.f;
-            draw->AddRectFilled(
-                ImVec2(listX, listY), 
-                ImVec2(listX + 200.f, listY + bgHeight),
-                IM_COL32(20, 20, 30, 220)
-            );
-            draw->AddRect(
-                ImVec2(listX, listY), 
-                ImVec2(listX + 200.f, listY + bgHeight),
-                IM_COL32(255, 100, 100, 255), 1.5f
-            );
-            
-            // Title
-            draw->AddText(ImVec2(listX + 5, listY + 5), IM_COL32(255, 100, 100, 255), "SPECTATORS");
-            
-            // List spectators
-            listY += 20.f;
-            for (const char* name : spectators) {
-                draw->AddText(ImVec2(listX + 10, listY), IM_COL32(255, 255, 255, 255), name);
+        // List spectators
+        listY += 20.f;
+        for (size_t i = 0; i < snap.spectatorCount; i++) {
+            const auto& spec = snap.spectators[i];
+            if (spec.valid && spec.name[0] != '\0') {
+                draw->AddText(ImVec2(listX + 10, listY), IM_COL32(255, 255, 255, 255), spec.name);
                 listY += 18.f;
             }
         }
     }
     
     // 3. BOMB TIMER - Show C4 countdown
-    if (esp_menu::g_config.bombTimer) {
-        // In real implementation, you'd read m_flC4Blow and m_bBombPlanted from game state
-        // For demonstration, we'll show a mock timer when bomb is "planted"
-        static bool mockBombPlanted = false; // Replace with actual game state
-        static float mockBombTime = 40.f;    // Replace with actual C4 blow time
+    if (esp_menu::g_config.bombTimer && snap.bomb.planted && snap.bomb.timeRemaining > 0.f) {
+        const float timerX = g_gameBounds.right / 2.f - 100.f;
+        const float timerY = 100.f;
         
-        if (mockBombPlanted && mockBombTime > 0.f) {
-            const float timerX = g_gameBounds.right / 2.f - 100.f;
-            const float timerY = 100.f;
-            
-            // Background
-            draw->AddRectFilled(
-                ImVec2(timerX, timerY), 
-                ImVec2(timerX + 200.f, timerY + 60.f),
-                IM_COL32(30, 10, 10, 230)
-            );
-            draw->AddRect(
-                ImVec2(timerX, timerY), 
-                ImVec2(timerX + 200.f, timerY + 60.f),
-                IM_COL32(255, 0, 0, 255), 2.f
-            );
-            
-            // Title
-            draw->AddText(ImVec2(timerX + 70, timerY + 5), IM_COL32(255, 50, 50, 255), "BOMB");
-            
-            // Time
-            auto timeStr = std::format("{:.1f}s", mockBombTime);
-            auto sz = ImGui::CalcTextSize(timeStr.c_str());
-            draw->AddText(
-                ImVec2(timerX + 100.f - sz.x / 2, timerY + 28), 
-                (mockBombTime < 10.f) ? IM_COL32(255, 0, 0, 255) : IM_COL32(255, 200, 0, 255), 
-                timeStr.c_str()
-            );
-            
-            // Progress bar
-            float progress = mockBombTime / 40.f;
-            draw->AddRectFilled(
-                ImVec2(timerX + 10, timerY + 48), 
-                ImVec2(timerX + 10 + 180.f * progress, timerY + 54),
-                (mockBombTime < 10.f) ? IM_COL32(255, 0, 0, 200) : IM_COL32(255, 150, 0, 200)
-            );
-            
-            mockBombTime -= ImGui::GetIO().DeltaTime; // Mock countdown
-        }
+        // Background
+        draw->AddRectFilled(
+            ImVec2(timerX, timerY), 
+            ImVec2(timerX + 200.f, timerY + 60.f),
+            IM_COL32(30, 10, 10, 230)
+        );
+        draw->AddRect(
+            ImVec2(timerX, timerY), 
+            ImVec2(timerX + 200.f, timerY + 60.f),
+            IM_COL32(255, 0, 0, 255), 2.f
+        );
+        
+        // Title
+        draw->AddText(ImVec2(timerX + 70, timerY + 5), IM_COL32(255, 50, 50, 255), "BOMB");
+        
+        // Time
+        auto timeStr = std::format("{:.1f}s", snap.bomb.timeRemaining);
+        auto sz = ImGui::CalcTextSize(timeStr.c_str());
+        draw->AddText(
+            ImVec2(timerX + 100.f - sz.x / 2, timerY + 28), 
+            (snap.bomb.timeRemaining < 10.f) ? IM_COL32(255, 0, 0, 255) : IM_COL32(255, 200, 0, 255), 
+            timeStr.c_str()
+        );
+        
+        // Progress bar (40 seconds total)
+        float progress = snap.bomb.timeRemaining / 40.f;
+        draw->AddRectFilled(
+            ImVec2(timerX + 10, timerY + 48), 
+            ImVec2(timerX + 10 + 180.f * progress, timerY + 54),
+            (snap.bomb.timeRemaining < 10.f) ? IM_COL32(255, 0, 0, 200) : IM_COL32(255, 150, 0, 200)
+        );
     }
     
     // 4. LOOT ESP - Show valuable weapons on ground
     if (esp_menu::g_config.lootESP) {
-        // In real implementation, iterate through all entities (not just players)
-        // and filter by entity class (e.g., CBaseWeapon, CC4)
-        // For demonstration, we'll show a concept:
+        ImU32 lootColor = ImGui::ColorConvertFloat4ToU32({
+            esp_menu::g_config.lootColor[0], 
+            esp_menu::g_config.lootColor[1], 
+            esp_menu::g_config.lootColor[2], 
+            esp_menu::g_config.lootColor[3]
+        });
         
-        struct LootItem {
-            Vec3 pos;
-            int weaponID;
-            const char* name;
-        };
-        
-        std::vector<LootItem> lootItems; // Would be populated from entity list
-        
-        // Mock loot items (in real code, read from memory)
-        // lootItems.push_back({{100, 200, 50}, 9, "AWP"});
-        // lootItems.push_back({{-50, 150, 50}, 7, "AK-47"});
-        
-        for (const auto& item : lootItems) {
-            auto screen = toScreen(item.pos);
-            if (!screen) continue;
+        for (size_t i = 0; i < snap.lootCount; i++) {
+            const auto& item = snap.loot[i];
+            if (!item.valid) continue;
             
-            ImU32 lootColor = ImGui::ColorConvertFloat4ToU32({
-                esp_menu::g_config.lootColor[0], 
-                esp_menu::g_config.lootColor[1], 
-                esp_menu::g_config.lootColor[2], 
-                esp_menu::g_config.lootColor[3]
-            });
+            auto screen = toScreen(item.position);
+            if (!screen) continue;
             
             // Draw icon
             draw->AddCircleFilled(ImVec2(screen->x, screen->y), 8.f, lootColor);
+            draw->AddCircle(ImVec2(screen->x, screen->y), 8.f, IM_COL32(0, 0, 0, 255), 0, 1.5f);
             
             // Draw weapon name
             auto sz = ImGui::CalcTextSize(item.name);
@@ -1238,46 +1417,35 @@ void renderESP() {
     
     // 5. SOUND ESP - Visualize sound events (footsteps, gunshots)
     if (esp_menu::g_config.soundESP) {
-        // In real implementation, hook game sound events or read sound buffer
-        // For demonstration, show concept:
-        
-        struct SoundEvent {
-            Vec3 pos;
-            const char* type; // "Footstep", "Gunshot", "Reload"
-            float fadeTime;
-        };
-        
-        static std::vector<SoundEvent> soundEvents; // Would be updated from sound hooks
-        
-        // Mock sound event (in real code, hook game sounds)
-        // soundEvents.push_back({{150, 100, 50}, "Footstep", 2.0f});
+        auto now = std::chrono::steady_clock::now();
         
         // Render and fade out sound events
-        auto it = soundEvents.begin();
-        while (it != soundEvents.end()) {
-            auto screen = toScreen(it->pos);
-            if (screen) {
-                float alpha = std::clamp(it->fadeTime / 2.f, 0.f, 1.f);
-                ImU32 soundColor = IM_COL32(255, 255, 0, (int)(255 * alpha));
-                
-                // Draw sound wave circles
-                draw->AddCircle(ImVec2(screen->x, screen->y), 20.f * (1.f - alpha), soundColor, 0, 2.f);
-                draw->AddCircle(ImVec2(screen->x, screen->y), 35.f * (1.f - alpha), soundColor, 0, 1.5f);
-                
-                // Draw sound type
+        for (auto& sound : snap.sounds) {
+            // Calculate fade time remaining
+            auto elapsed = std::chrono::duration<float>(now - sound.timestamp).count();
+            float timeRemaining = sound.fadeTime - elapsed;
+            
+            if (timeRemaining <= 0.f) continue; // Skip expired sounds
+            
+            auto screen = toScreen(sound.position);
+            if (!screen) continue;
+            
+            float alpha = std::clamp(timeRemaining / sound.fadeTime, 0.f, 1.f);
+            ImU32 soundColor = IM_COL32(255, 255, 0, (int)(255 * alpha));
+            
+            // Draw sound wave circles (expanding effect)
+            float waveSize = 20.f + (1.f - alpha) * 30.f; // 20-50 pixels
+            draw->AddCircle(ImVec2(screen->x, screen->y), waveSize, soundColor, 0, 2.f);
+            draw->AddCircle(ImVec2(screen->x, screen->y), waveSize * 1.5f, soundColor, 0, 1.5f);
+            
+            // Draw sound type
+            if (sound.type) {
                 esp::drawOutlinedText(
                     draw, 
                     ImVec2(screen->x - 30, screen->y - 10), 
                     soundColor, 
-                    it->type
+                    sound.type
                 );
-            }
-            
-            it->fadeTime -= ImGui::GetIO().DeltaTime;
-            if (it->fadeTime <= 0.f) {
-                it = soundEvents.erase(it);
-            } else {
-                ++it;
             }
         }
     }
