@@ -85,15 +85,15 @@ namespace offsets {
     constexpr uintptr_t m_hPlayerPawn = 0x8FC;       // 2300
     constexpr uintptr_t m_iszPlayerName = 0x6E8;     // 1768
     
-    // NEW: Advanced ESP offsets
-    constexpr uintptr_t m_hObserverTarget = 0x44;    // Observer target (spectator)
-    constexpr uintptr_t m_iObserverMode = 0x40;      // Observer mode
-    constexpr uintptr_t m_bSpotted = 0x8;            // Radar spotted
-    constexpr uintptr_t m_flC4Blow = 0x2C;           // C4 blow time
-    constexpr uintptr_t m_bBombPlanted = 0x30;       // Bomb planted
-    constexpr uintptr_t m_AttributeManager = 0x10;   // For weapon info
-    constexpr uintptr_t m_Item = 0x50;               // Item definition
-    constexpr uintptr_t m_iItemDefinitionIndex = 0x1D2; // Weapon ID
+    // NEW: Advanced ESP offsets (from offsets/cpp/client_dll.hpp)
+    constexpr uintptr_t m_hObserverTarget = 0x44;    // C_PlayerObserverServices::m_hObserverTarget
+    constexpr uintptr_t m_iObserverMode = 0x40;      // C_PlayerObserverServices::m_iObserverMode
+    constexpr uintptr_t m_bSpotted = 0x8;            // C_BaseEntity::m_bSpotted
+    constexpr uintptr_t m_flC4Blow = 0x1190;         // C_PlantedC4::m_flC4Blow
+    constexpr uintptr_t m_bBombPlanted = 0x9A9;     // C_PlantedC4::m_bBombPlanted
+    constexpr uintptr_t m_AttributeManager = 0x1438; // C_BaseEntity::m_AttributeManager (for weapons)
+    constexpr uintptr_t m_Item = 0x50;               // C_AttributeContainer::m_Item
+    constexpr uintptr_t m_iItemDefinitionIndex = 0x1BA; // CEconItemView::m_iItemDefinitionIndex
     
     // Bone indices for skeleton
     namespace bones {
