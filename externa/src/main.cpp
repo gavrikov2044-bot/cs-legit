@@ -66,6 +66,7 @@ namespace offsets {
     constexpr uintptr_t dwEntityList = 0x1D13CE8;           // 30489832
     constexpr uintptr_t dwLocalPlayerController = 0x1E1DC18; // 31579160
     constexpr uintptr_t dwViewMatrix = 0x1E323D0;            // 31663056
+    constexpr uintptr_t dwGlobalVars = 0x1BE41C0;            // GlobalVars for game time
     
     // C_BaseEntity / C_CSPlayerPawn
     constexpr uintptr_t m_iHealth = 0x34C;           // 844
@@ -86,11 +87,12 @@ namespace offsets {
     constexpr uintptr_t m_iszPlayerName = 0x6E8;     // 1768
     
     // NEW: Advanced ESP offsets (from offsets/cpp/client_dll.hpp)
-    constexpr uintptr_t m_hObserverTarget = 0x44;    // C_PlayerObserverServices::m_hObserverTarget
-    constexpr uintptr_t m_iObserverMode = 0x40;      // C_PlayerObserverServices::m_iObserverMode
+    constexpr uintptr_t m_pObserverServices = 0x1408; // C_CSPlayerPawn::m_pObserverServices (pointer to CPlayer_ObserverServices)
+    constexpr uintptr_t m_hObserverTarget = 0x44;    // CPlayer_ObserverServices::m_hObserverTarget
+    constexpr uintptr_t m_iObserverMode = 0x40;      // CPlayer_ObserverServices::m_iObserverMode
     constexpr uintptr_t m_bSpotted = 0x8;            // C_BaseEntity::m_bSpotted
     constexpr uintptr_t m_flC4Blow = 0x1190;         // C_PlantedC4::m_flC4Blow
-    constexpr uintptr_t m_bBombPlanted = 0x9A9;     // C_PlantedC4::m_bBombPlanted
+    constexpr uintptr_t m_bBombTicking = 0x1160;     // C_PlantedC4::m_bBombTicking (use this instead of m_bBombPlanted)
     constexpr uintptr_t m_AttributeManager = 0x1438; // C_BaseEntity::m_AttributeManager (for weapons)
     constexpr uintptr_t m_Item = 0x50;               // C_AttributeContainer::m_Item
     constexpr uintptr_t m_iItemDefinitionIndex = 0x1BA; // CEconItemView::m_iItemDefinitionIndex
@@ -826,6 +828,11 @@ void dataReaderLoop() {
         // 1. SPECTATOR LIST - Check who's watching local player
         snap.spectatorCount = 0;
         if (localPawn) {
+            uint32_t localPawnHandle = 0;
+            if (localController) {
+                localPawnHandle = g_mem.read<uint32_t>(localController + offsets::m_hPlayerPawn);
+            }
+            
             for (int i = 1; i <= 64; i++) {
                 uintptr_t listEntry = g_mem.read<uintptr_t>(entityList + (8 * (i & 0x7FFF) >> 9) + 16);
                 if (!listEntry) continue;
@@ -833,25 +840,33 @@ void dataReaderLoop() {
                 uintptr_t controller = g_mem.read<uintptr_t>(listEntry + 112 * (i & 0x1FF));
                 if (!controller) continue;
                 
+                // Get player pawn to access ObserverServices
+                uint32_t pawnHandle = g_mem.read<uint32_t>(controller + offsets::m_hPlayerPawn);
+                if (!pawnHandle) continue;
+                
+                uintptr_t listEntry2 = g_mem.read<uintptr_t>(entityList + 0x8 * ((pawnHandle & 0x7FFF) >> 9) + 16);
+                if (!listEntry2) continue;
+                
+                uintptr_t pawn = g_mem.read<uintptr_t>(listEntry2 + 112 * (pawnHandle & 0x1FF));
+                if (!pawn) continue;
+                
+                // Get ObserverServices pointer from pawn
+                uintptr_t observerServices = g_mem.read<uintptr_t>(pawn + offsets::m_pObserverServices);
+                if (!observerServices) continue;
+                
                 // Check if this player is spectating
-                uint32_t observerTarget = g_mem.read<uint32_t>(controller + offsets::m_hObserverTarget);
-                int observerMode = g_mem.read<int>(controller + offsets::m_iObserverMode);
+                int observerMode = g_mem.read<int>(observerServices + offsets::m_iObserverMode);
+                uint32_t observerTarget = g_mem.read<uint32_t>(observerServices + offsets::m_hObserverTarget);
                 
                 // If observer mode > 0 and target matches local pawn handle
-                if (observerMode > 0 && observerTarget) {
-                    uint32_t localPawnHandle = 0;
-                    if (localController) {
-                        localPawnHandle = g_mem.read<uint32_t>(localController + offsets::m_hPlayerPawn);
-                    }
-                    
+                if (observerMode > 0 && observerTarget && localPawnHandle) {
                     // Check if observer target matches local pawn
                     if ((observerTarget & 0x7FFF) == (localPawnHandle & 0x7FFF)) {
-                        // Read spectator name
-                        uintptr_t namePtr = g_mem.read<uintptr_t>(controller + offsets::m_iszPlayerName);
-                        if (namePtr) {
-                            auto& spec = snap.spectators[snap.spectatorCount];
-                            g_mem.readRaw(namePtr, spec.name, sizeof(spec.name) - 1);
-                            spec.name[sizeof(spec.name) - 1] = '\0';
+                        // Read spectator name (m_iszPlayerName is char[128], not a pointer!)
+                        auto& spec = snap.spectators[snap.spectatorCount];
+                        g_mem.readRaw(controller + offsets::m_iszPlayerName, spec.name, sizeof(spec.name) - 1);
+                        spec.name[sizeof(spec.name) - 1] = '\0';
+                        if (spec.name[0] != '\0') {
                             spec.valid = true;
                             snap.spectatorCount++;
                         }
@@ -874,22 +889,30 @@ void dataReaderLoop() {
             uintptr_t entity = g_mem.read<uintptr_t>(listEntry + 112 * (i & 0x1FF));
             if (!entity) continue;
             
-            // Check if it's C4 - read bomb planted flag
-            // Note: Offset may need adjustment based on actual CS2 structure
-            bool bombPlanted = g_mem.read<bool>(entity + offsets::m_bBombPlanted);
-            if (bombPlanted) {
-                // m_flC4Blow is typically the game time when bomb will explode
-                // We need to compare with current game time
-                // For now, read it as time remaining (may need adjustment)
+            // Check if it's C4 - read bomb ticking flag (C_PlantedC4::m_bBombTicking)
+            bool bombTicking = g_mem.read<bool>(entity + offsets::m_bBombTicking);
+            if (bombTicking) {
+                // m_flC4Blow is GameTime_t (game time when bomb will explode)
                 float blowTime = g_mem.read<float>(entity + offsets::m_flC4Blow);
                 
-                // If blowTime is a timestamp, calculate remaining time
-                // If it's already time remaining, use it directly
-                // Common CS2 pattern: m_flC4Blow is game time, so we need current game time
-                // For simplicity, assume it's time remaining if < 50 seconds
-                if (blowTime > 0.f && blowTime < 50.f) {
-                    snap.bomb.timeRemaining = blowTime;
-                    snap.bomb.planted = true;
+                if (blowTime > 0.f) {
+                    // Read current game time from GlobalVars
+                    // GlobalVars structure: curtime is at offset 0x2C (from engine2_dll.hpp)
+                    uintptr_t globalVars = g_mem.read<uintptr_t>(g_mem.client + offsets::dwGlobalVars);
+                    float currentTime = 0.f;
+                    if (globalVars) {
+                        currentTime = g_mem.read<float>(globalVars + 0x2C); // curtime offset
+                    }
+                    
+                    // Calculate remaining time
+                    if (currentTime > 0.f && blowTime > currentTime) {
+                        snap.bomb.timeRemaining = blowTime - currentTime;
+                        snap.bomb.planted = true;
+                    } else if (blowTime > 0.f) {
+                        // Fallback: if we can't read current time, assume reasonable value
+                        snap.bomb.timeRemaining = std::min(40.f, blowTime);
+                        snap.bomb.planted = true;
+                    }
                     
                     // Get C4 position
                     uintptr_t sceneNode = g_mem.read<uintptr_t>(entity + offsets::m_pGameSceneNode);
