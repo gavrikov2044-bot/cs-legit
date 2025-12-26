@@ -814,7 +814,11 @@ void dataReaderLoop() {
                     p.boneLegR[1] = getBone(offsets::bones::LEG_R_LOWER);
                     p.boneLegR[2] = getBone(offsets::bones::LEG_R_FOOT);
                     
-                    if (p.boneHead.x != 0 || p.boneHead.y != 0) p.bonesValid = true;
+                    if (p.boneHead.x != 0 || p.boneHead.y != 0) {
+                        p.bonesValid = true;
+                        // Update headPos with real bone position for stable rendering
+                        p.headPos = p.boneHead;
+                    }
                 }
             }
             
