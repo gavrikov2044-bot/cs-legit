@@ -589,6 +589,77 @@ bool g_useDirectComposition = false;  // Will be set if DComp succeeds
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
+// ====================================
+// HELPER FUNCTIONS FOR ADVANCED ESP
+// (Moved before dataReaderLoop to avoid forward declaration issues)
+// ====================================
+
+// Get weapon name by ID
+const char* getWeaponName(int weaponID) {
+    switch (weaponID) {
+        case 1: return "Deagle";
+        case 2: return "Dual Berettas";
+        case 3: return "Five-Seven";
+        case 4: return "Glock-18";
+        case 7: return "AK-47";
+        case 8: return "AUG";
+        case 9: return "AWP";
+        case 10: return "FAMAS";
+        case 11: return "G3SG1";
+        case 13: return "Galil AR";
+        case 14: return "M249";
+        case 16: return "M4A4";
+        case 17: return "MAC-10";
+        case 19: return "P90";
+        case 23: return "MP5-SD";
+        case 24: return "UMP-45";
+        case 25: return "XM1014";
+        case 26: return "PP-Bizon";
+        case 27: return "MAG-7";
+        case 28: return "Negev";
+        case 29: return "Sawed-Off";
+        case 30: return "Tec-9";
+        case 31: return "Zeus x27";
+        case 32: return "P2000";
+        case 33: return "MP7";
+        case 34: return "MP9";
+        case 35: return "Nova";
+        case 36: return "P250";
+        case 38: return "SCAR-20";
+        case 39: return "SG 553";
+        case 40: return "SSG 08";
+        case 60: return "M4A1-S";
+        case 61: return "USP-S";
+        case 63: return "CZ75-Auto";
+        case 64: return "R8 Revolver";
+        case 500: return "Bayonet";
+        case 503: return "Knife";
+        case 505: return "Flip Knife";
+        case 506: return "Gut Knife";
+        case 507: return "Karambit";
+        case 508: return "M9 Bayonet";
+        case 509: return "Huntsman Knife";
+        case 515: return "Butterfly Knife";
+        case 516: return "Shadow Daggers";
+        case 42: return "C4";
+        case 43: return "Flashbang";
+        case 44: return "HE Grenade";
+        case 45: return "Smoke";
+        case 46: return "Molotov";
+        case 47: return "Decoy";
+        case 48: return "Incendiary";
+        default: return "Unknown";
+    }
+}
+
+// Check if weapon is valuable for Loot ESP
+bool isValuableWeapon(int weaponID) {
+    // Rifles, snipers, expensive pistols
+    return weaponID == 7 || weaponID == 8 || weaponID == 9 || weaponID == 10 || 
+           weaponID == 11 || weaponID == 13 || weaponID == 16 || weaponID == 38 || 
+           weaponID == 39 || weaponID == 40 || weaponID == 60 || weaponID == 1;
+}
+
 // ============================================
 // READER THREAD - Heavy lifting happens here
 // ============================================
@@ -870,16 +941,17 @@ void dataReaderLoop() {
         static std::map<size_t, std::chrono::steady_clock::time_point> lastFootstepTime;
         static std::map<size_t, int> lastAmmoCount; // Track ammo for gunshot detection
         
-        auto now = std::chrono::steady_clock::now();
+        // Use existing 'now' variable from line 605
         
         // Keep old sounds and add new ones
         static std::vector<DrawSnapshot::SoundEvent> persistentSounds;
         
         // Remove expired sounds
+        auto soundNow = std::chrono::steady_clock::now();
         persistentSounds.erase(
             std::remove_if(persistentSounds.begin(), persistentSounds.end(),
-                [&now](const DrawSnapshot::SoundEvent& s) {
-                    auto elapsed = std::chrono::duration<float>(now - s.timestamp).count();
+                [&soundNow](const DrawSnapshot::SoundEvent& s) {
+                    auto elapsed = std::chrono::duration<float>(soundNow - s.timestamp).count();
                     return elapsed >= s.fadeTime;
                 }),
             persistentSounds.end()
@@ -903,7 +975,7 @@ void dataReaderLoop() {
                 auto lastFootstep = lastFootstepTime.find(i);
                 bool canPlayFootstep = true;
                 if (lastFootstep != lastFootstepTime.end()) {
-                    auto timeSince = std::chrono::duration<float>(now - lastFootstep->second).count();
+                    auto timeSince = std::chrono::duration<float>(soundNow - lastFootstep->second).count();
                     canPlayFootstep = (timeSince > 0.3f); // Max 3 footsteps per second
                 }
                 
@@ -912,10 +984,10 @@ void dataReaderLoop() {
                     sound.position = p.origin;
                     sound.type = "Footstep";
                     sound.fadeTime = 2.0f;
-                    sound.timestamp = now;
+                    sound.timestamp = soundNow;
                     persistentSounds.push_back(sound);
                     
-                    lastFootstepTime[i] = now;
+                    lastFootstepTime[i] = soundNow;
                 }
             }
             
@@ -974,76 +1046,6 @@ bool WorldToScreen(const ViewMatrix& m, const Vec3& pos, Vec3& out) {
     out.z = clip_w;
     
     return true;
-}
-
-// ====================================
-// HELPER FUNCTIONS FOR ADVANCED ESP
-// ====================================
-
-// Get weapon name by ID
-const char* getWeaponName(int weaponID) {
-    switch (weaponID) {
-        case 1: return "Deagle";
-        case 2: return "Dual Berettas";
-        case 3: return "Five-Seven";
-        case 4: return "Glock-18";
-        case 7: return "AK-47";
-        case 8: return "AUG";
-        case 9: return "AWP";
-        case 10: return "FAMAS";
-        case 11: return "G3SG1";
-        case 13: return "Galil AR";
-        case 14: return "M249";
-        case 16: return "M4A4";
-        case 17: return "MAC-10";
-        case 19: return "P90";
-        case 23: return "MP5-SD";
-        case 24: return "UMP-45";
-        case 25: return "XM1014";
-        case 26: return "PP-Bizon";
-        case 27: return "MAG-7";
-        case 28: return "Negev";
-        case 29: return "Sawed-Off";
-        case 30: return "Tec-9";
-        case 31: return "Zeus x27";
-        case 32: return "P2000";
-        case 33: return "MP7";
-        case 34: return "MP9";
-        case 35: return "Nova";
-        case 36: return "P250";
-        case 38: return "SCAR-20";
-        case 39: return "SG 553";
-        case 40: return "SSG 08";
-        case 60: return "M4A1-S";
-        case 61: return "USP-S";
-        case 63: return "CZ75-Auto";
-        case 64: return "R8 Revolver";
-        case 500: return "Bayonet";
-        case 503: return "Knife";
-        case 505: return "Flip Knife";
-        case 506: return "Gut Knife";
-        case 507: return "Karambit";
-        case 508: return "M9 Bayonet";
-        case 509: return "Huntsman Knife";
-        case 515: return "Butterfly Knife";
-        case 516: return "Shadow Daggers";
-        case 42: return "C4";
-        case 43: return "Flashbang";
-        case 44: return "HE Grenade";
-        case 45: return "Smoke";
-        case 46: return "Molotov";
-        case 47: return "Decoy";
-        case 48: return "Incendiary";
-        default: return "Unknown";
-    }
-}
-
-// Check if weapon is valuable for Loot ESP
-bool isValuableWeapon(int weaponID) {
-    // Rifles, snipers, expensive pistols
-    return weaponID == 7 || weaponID == 8 || weaponID == 9 || weaponID == 10 || 
-           weaponID == 11 || weaponID == 13 || weaponID == 16 || weaponID == 38 || 
-           weaponID == 39 || weaponID == 40 || weaponID == 60 || weaponID == 1;
 }
 
 // ============================================
@@ -1258,7 +1260,7 @@ void renderESP() {
     // ====================================
     
     // 1. RADAR HACK - Mini radar in corner
-    if (esp_menu::g_config.radarHack) {
+    if (esp_menu::g_settings.radarHack) {
         const float radarSize = 150.f;
         const float radarX = g_gameBounds.right - radarSize - 20.f;
         const float radarY = 20.f;
@@ -1315,7 +1317,7 @@ void renderESP() {
     }
     
     // 2. SPECTATOR LIST - Who's watching you
-    if (esp_menu::g_config.spectatorList && snap.spectatorCount > 0) {
+    if (esp_menu::g_settings.spectatorList && snap.spectatorCount > 0) {
         const float listX = 20.f;
         float listY = g_gameBounds.bottom - 200.f;
         
@@ -1347,7 +1349,7 @@ void renderESP() {
     }
     
     // 3. BOMB TIMER - Show C4 countdown
-    if (esp_menu::g_config.bombTimer && snap.bomb.planted && snap.bomb.timeRemaining > 0.f) {
+    if (esp_menu::g_settings.bombTimer && snap.bomb.planted && snap.bomb.timeRemaining > 0.f) {
         const float timerX = g_gameBounds.right / 2.f - 100.f;
         const float timerY = 100.f;
         
@@ -1385,12 +1387,12 @@ void renderESP() {
     }
     
     // 4. LOOT ESP - Show valuable weapons on ground
-    if (esp_menu::g_config.lootESP) {
+    if (esp_menu::g_settings.lootESP) {
         ImU32 lootColor = ImGui::ColorConvertFloat4ToU32({
-            esp_menu::g_config.lootColor[0], 
-            esp_menu::g_config.lootColor[1], 
-            esp_menu::g_config.lootColor[2], 
-            esp_menu::g_config.lootColor[3]
+            esp_menu::g_settings.lootColor[0], 
+            esp_menu::g_settings.lootColor[1], 
+            esp_menu::g_settings.lootColor[2], 
+            esp_menu::g_settings.lootColor[3]
         });
         
         for (size_t i = 0; i < snap.lootCount; i++) {
@@ -1416,7 +1418,7 @@ void renderESP() {
     }
     
     // 5. SOUND ESP - Visualize sound events (footsteps, gunshots)
-    if (esp_menu::g_config.soundESP) {
+    if (esp_menu::g_settings.soundESP) {
         auto now = std::chrono::steady_clock::now();
         
         // Render and fade out sound events
