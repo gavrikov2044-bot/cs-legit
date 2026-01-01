@@ -6,6 +6,7 @@
 #include "vulnerable_drivers.hpp"
 #include <filesystem>
 #include <random>
+#include <tchar.h>
 
 #pragma warning(disable: 4996) // _CRT_SECURE_NO_WARNINGS
 
@@ -41,7 +42,7 @@ bool EnableLoadDriverPrivilege() {
     tp.PrivilegeCount = 1;
     tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
     
-    if (!LookupPrivilegeValueW(NULL, SE_LOAD_DRIVER_NAME, &tp.Privileges[0].Luid)) {
+    if (!LookupPrivilegeValue(NULL, SE_LOAD_DRIVER_NAME, &tp.Privileges[0].Luid)) {
         CloseHandle(hToken);
         return false;
     }
