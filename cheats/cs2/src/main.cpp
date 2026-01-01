@@ -269,14 +269,24 @@ bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
     
     DXGI_SWAP_CHAIN_DESC1 sd1{};
     sd1.Width = w; sd1.Height = h;
-    sd1.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    sd1.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // Changed to R8G8B8A8
     sd1.SampleDesc.Count = 1;
     sd1.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    sd1.BufferCount = 2;
-    sd1.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD; // Modern flip model
-    sd1.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED; 
+    sd1.BufferCount = 2; // For FLIP
+    sd1.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD; // Try FLIP again but with different Alpha
+    sd1.AlphaMode = DXGI_ALPHA_MODE_IGNORE; // Change PREMULTIPLIED to IGNORE
+    sd1.Scaling = DXGI_SCALING_STRETCH;
     
+    // Fallback if FLIP fails
     HRESULT hr = factory->CreateSwapChainForHwnd(g_dev, g_hwnd, &sd1, nullptr, nullptr, &g_swapChain);
+    
+    if (FAILED(hr)) {
+        Log("[!] FLIP SwapChain failed: " + std::to_string(hr) + ". Trying DISCARD...");
+        sd1.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+        sd1.BufferCount = 1;
+        sd1.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
+        hr = factory->CreateSwapChainForHwnd(g_dev, g_hwnd, &sd1, nullptr, nullptr, &g_swapChain);
+    }
     
     factory->Release();
     adapter->Release();
