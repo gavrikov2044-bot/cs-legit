@@ -1,41 +1,28 @@
-; Direct Syscall for NtReadVirtualMemory (x64)
-; Bypasses usermode hooks in ntdll.dll
-;
-; Tested on Windows 10/11 all versions
+; Professional Direct Syscall Stub (Variant 1B - Data Segment)
+; Target: NtReadVirtualMemory
+; ABI: Microsoft x64
+; No stack manipulation, no text patching.
+
+.data
+; Global variable to hold the SSN. 
+; It will be set by C++ at runtime.
+PUBLIC NtReadVirtualMemory_SSN
+NtReadVirtualMemory_SSN DWORD 0
 
 .code
 
-; Our function signature:
-; NTSTATUS DirectSyscall(
-;     DWORD syscallNumber,     ; rcx
-;     HANDLE ProcessHandle,    ; rdx
-;     PVOID BaseAddress,       ; r8
-;     PVOID Buffer,            ; r9
-;     SIZE_T Size,             ; [rsp+28h]
-;     PSIZE_T BytesRead        ; [rsp+30h]
+; NTSTATUS NtReadVirtualMemory_Direct(
+;     HANDLE  ProcessHandle,   ; rcx
+;     PVOID   BaseAddress,     ; rdx
+;     PVOID   Buffer,          ; r8
+;     SIZE_T  Size,            ; r9
+;     PSIZE_T BytesRead        ; [rsp+28h]
 ; )
-;
-; NtReadVirtualMemory syscall expects:
-;     eax = syscall number
-;     r10 = ProcessHandle (1st arg)
-;     rdx = BaseAddress (2nd arg)
-;     r8  = Buffer (3rd arg)
-;     r9  = Size (4th arg)
-;     [rsp+28h] = BytesRead (5th arg)
-
-DirectSyscall PROC
-    mov eax, ecx              ; syscall number -> eax
-    mov r10, rdx              ; ProcessHandle -> r10
-    mov rdx, r8               ; BaseAddress -> rdx
-    mov r8, r9                ; Buffer -> r8
-    mov r9, [rsp+28h]         ; Size -> r9
-    
-    ; Move BytesRead to correct stack position for syscall
-    mov r11, [rsp+30h]        ; BytesRead (our 6th arg)
-    mov [rsp+28h], r11        ; -> syscall's 5th arg position
-    
+NtReadVirtualMemory_Direct PROC
+    mov     r10, rcx                    ; syscall ABI requirement (rcx -> r10)
+    mov     eax, NtReadVirtualMemory_SSN ; Load SSN from .data
     syscall
     ret
-DirectSyscall ENDP
+NtReadVirtualMemory_Direct ENDP
 
 end

@@ -93,50 +93,91 @@ namespace offsets {
     constexpr uintptr_t m_ArmorValue = 0x1518; // Standard Armor Offset
 }
 
+#include <winternl.h>
+
 // ============================================
-// Direct Syscalls (Ring 3 Stealth)
+// Professional Direct Syscalls (Variant 1B)
 // ============================================
-extern "C" NTSTATUS DirectSyscall(
-    DWORD syscallNumber,
-    HANDLE ProcessHandle,
-    PVOID BaseAddress,
-    PVOID Buffer,
-    SIZE_T Size,
+
+// 1. The Global Variable defined in ASM (.data)
+extern "C" DWORD NtReadVirtualMemory_SSN;
+
+// 2. The ASM Stub with Native Signature
+extern "C" NTSTATUS NtReadVirtualMemory_Direct(
+    HANDLE  ProcessHandle,
+    PVOID   BaseAddress,
+    PVOID   Buffer,
+    SIZE_T  Size,
     PSIZE_T BytesRead
 );
 
-DWORD GetNtReadVirtualMemorySyscall() {
-    HMODULE hNtdll = GetModuleHandleA("ntdll.dll");
-    if (!hNtdll) return 0; 
-    
-    FARPROC func = GetProcAddress(hNtdll, "NtReadVirtualMemory");
-    if (!func) return 0;
-    
-    BYTE* p = (BYTE*)func;
-    
-    // Professional SSN Extraction
-    // Expected:
-    // 4C 8B D1          mov r10, rcx
-    // B8 xx xx xx xx    mov eax, imm32
-    // 0F 05             syscall
-    
-    if (p[0] == 0x4C && p[1] == 0x8B && p[2] == 0xD1 && p[3] == 0xB8) {
-         return *(DWORD*)(p + 4);
-    }
-    
-    // Check for JMP hook (E9) - Anti-Cheat might be present
-    if (p[0] == 0xE9) {
-        // We could follow the jump, but for safety/stealth, 
-        // falling back to WinAPI is often smarter than analyzing the hook.
-        // However, we can check neighbor functions or use Halos Gate here.
-        // For this version: Fallback.
-        return 0;
-    }
-    
-    return 0; 
-}
+// 3. KnownDlls Resolver (Clean Ntdll)
+// Definitions for Native API
+typedef NTSTATUS (NTAPI *NtOpenSection_t)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES);
+typedef NTSTATUS (NTAPI *NtMapViewOfSection_t)(HANDLE, HANDLE, PVOID*, ULONG_PTR, SIZE_T, PLARGE_INTEGER, PSIZE_T, DWORD, ULONG, ULONG);
 
-DWORD g_syscallSSN = 0;
+// Clean SSN Extraction from KnownDlls
+DWORD GetSyscallIdClean() {
+    // 1. Get addresses of Native APIs
+    HMODULE hNtdllLocal = GetModuleHandleA("ntdll.dll");
+    if (!hNtdllLocal) return 0;
+    
+    auto NtOpenSection = (NtOpenSection_t)GetProcAddress(hNtdllLocal, "NtOpenSection");
+    auto NtMapViewOfSection = (NtMapViewOfSection_t)GetProcAddress(hNtdllLocal, "NtMapViewOfSection");
+    
+    if (!NtOpenSection || !NtMapViewOfSection) return 0;
+
+    // 2. Map \KnownDlls\ntdll.dll (The Holy Grail of Clean Code)
+    UNICODE_STRING name;
+    OBJECT_ATTRIBUTES oa;
+    HANDLE section = NULL;
+    PVOID base = NULL;
+    SIZE_T size = 0;
+    
+    // Manual RtlInitUnicodeString to avoid dependency
+    wchar_t path[] = L"\\KnownDlls\\ntdll.dll";
+    name.Buffer = path;
+    name.Length = sizeof(path) - sizeof(wchar_t);
+    name.MaximumLength = sizeof(path);
+    
+    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    
+    if (NtOpenSection(&section, SECTION_MAP_READ, &oa) != 0) return 0;
+    
+    NTSTATUS status = NtMapViewOfSection(section, GetCurrentProcess(), &base, 0, 0, NULL, &size, ViewUnmap, 0, PAGE_READONLY);
+    CloseHandle(section);
+    
+    if (status != 0 || !base) return 0;
+    
+    // 3. Parse PE Headers of Clean Ntdll
+    uint8_t* clean = (uint8_t*)base;
+    PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)clean;
+    PIMAGE_NT_HEADERS nt = (PIMAGE_NT_HEADERS)(clean + dos->e_lfanew);
+    PIMAGE_EXPORT_DIRECTORY exp = (PIMAGE_EXPORT_DIRECTORY)(clean + nt->OptionalHeader.DataDirectory[0].VirtualAddress);
+    
+    DWORD* names = (DWORD*)(clean + exp->AddressOfNames);
+    DWORD* funcs = (DWORD*)(clean + exp->AddressOfFunctions);
+    WORD* ords = (WORD*)(clean + exp->AddressOfNameOrdinals);
+    
+    DWORD ssn = 0;
+    
+    for (DWORD i = 0; i < exp->NumberOfNames; i++) {
+        const char* fn = (char*)(clean + names[i]);
+        if (strcmp(fn, "NtReadVirtualMemory") == 0) {
+            uint8_t* stub = clean + funcs[ords[i]];
+            
+            // Check Signature: 4C 8B D1 B8 ...
+            if (stub[0] == 0x4C && stub[1] == 0x8B && stub[2] == 0xD1 && stub[3] == 0xB8) {
+                ssn = *(DWORD*)(stub + 4);
+            }
+            break;
+        }
+    }
+    
+    // Unmap not strictly necessary as process exits, but good practice usually.
+    // For now we leak the view (it's readonly system memory) to keep code simple.
+    return ssn;
+}
 
 // ============================================
 // Memory System (Simple & Fast)
@@ -148,14 +189,16 @@ public:
     HWND gameHwnd = nullptr;
     
     bool attach() {
-        // Init SSN
-        // Re-enabled with robust scanner
-        g_syscallSSN = GetNtReadVirtualMemorySyscall();
+        // Init SSN from KnownDlls
+        DWORD cleanSSN = GetSyscallIdClean();
         
-        if (g_syscallSSN != 0) {
-            Log("[+] Stealth Mode: Dynamic SSN Found (" + std::to_string(g_syscallSSN) + ")");
+        if (cleanSSN != 0) {
+            NtReadVirtualMemory_SSN = cleanSSN; // Set Global for ASM
+            Log("[+] Stealth: Clean SSN Found via KnownDlls (" + std::to_string(cleanSSN) + ")");
         } else {
-            Log("[!] Stealth Mode: SSN Lookup Failed. Using WinAPI.");
+            // Fallback to local scan if KnownDlls fails (rare)
+            NtReadVirtualMemory_SSN = 0; // Disable Syscall
+            Log("[!] Stealth: KnownDlls Failed. Fallback to WinAPI.");
         }
         
         HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -213,9 +256,9 @@ public:
         }
 
         // Priority 2: Direct Syscall (Ring 3 Stealth)
-        if (g_syscallSSN > 0) {
+        if (NtReadVirtualMemory_SSN > 0) {
             SIZE_T bytesRead = 0;
-            NTSTATUS status = DirectSyscall(g_syscallSSN, handle, (PVOID)addr, buf, size, &bytesRead);
+            NTSTATUS status = NtReadVirtualMemory_Direct(handle, (PVOID)addr, buf, size, &bytesRead);
             if (status != 0) {
                 // Log once and DISABLE syscalls to fallback immediately
                 static bool logged = false;
@@ -223,7 +266,7 @@ public:
                     Log("[!] Syscall Read Failed: Status " + std::to_string(status) + ". Reverting to WinAPI.");
                     logged = true;
                 }
-                g_syscallSSN = 0; // Force fallback for next calls
+                NtReadVirtualMemory_SSN = 0; // Force fallback for next calls
                 // Try WinAPI immediately this time
                 return ReadProcessMemory(handle, (LPCVOID)addr, buf, size, nullptr);
             }
