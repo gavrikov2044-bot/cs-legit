@@ -5,7 +5,7 @@ use std::ffi::c_void;
 use std::mem;
 
 use anyhow::{anyhow, Result};
-use windows::Win32::Foundation::{HANDLE, CloseHandle};
+use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_VM_READ, PROCESS_QUERY_INFORMATION};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Module32FirstW, Module32NextW,

@@ -14,7 +14,7 @@ use windows::Win32::Graphics::Gdi::{
     GetDC, ReleaseDC, InvalidateRect, CreateFontW, DrawTextW,
     PS_SOLID, GetStockObject, NULL_BRUSH, HRGN, HGDIOBJ, DT_CENTER, DT_VCENTER, DT_SINGLELINE,
     FW_BOLD, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, 
-    CLEARTYPE_QUALITY, DEFAULT_PITCH, FF_DONTCARE,
+    CLEARTYPE_QUALITY, DEFAULT_PITCH, FF_DONTCARE, FONT_PITCH_AND_FAMILY,
 };
 use windows::Win32::Graphics::Dwm::{
     DwmExtendFrameIntoClientArea, DwmEnableBlurBehindWindow, DwmIsCompositionEnabled,
@@ -309,8 +309,8 @@ impl Overlay {
         unsafe {
             let font = CreateFontW(
                 size, 0, 0, 0, FW_BOLD.0 as i32, 0, 0, 0,
-                DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32,
-                CLEARTYPE_QUALITY.0 as u32, (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY, FONT_PITCH_AND_FAMILY(DEFAULT_PITCH.0 | FF_DONTCARE.0),
                 windows::core::w!("Segoe UI"),
             );
             
@@ -338,8 +338,8 @@ impl Overlay {
         unsafe {
             let font = CreateFontW(
                 size, 0, 0, 0, 400, 0, 0, 0,
-                DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32,
-                CLEARTYPE_QUALITY.0 as u32, (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY, FONT_PITCH_AND_FAMILY(DEFAULT_PITCH.0 | FF_DONTCARE.0),
                 windows::core::w!("Segoe UI"),
             );
             
