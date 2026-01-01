@@ -357,6 +357,13 @@ void render() {
     }
 }
 
+// Helper for logging
+void Log(const std::string& msg) {
+    std::cout << msg << std::endl;
+    std::ofstream f("log.txt", std::ios::app);
+    if(f) f << msg << std::endl;
+}
+
 // ============================================
 // Main Entry
 // ============================================
@@ -366,29 +373,49 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     FILE* f;
     freopen_s(&f, "CONOUT$", "w", stdout);
     freopen_s(&f, "CONOUT$", "w", stderr);
-    std::cout << "[INFO] ExternaCS2 v2.0 Starting..." << std::endl;
+    
+    // Clear old log
+    std::ofstream("log.txt", std::ios::trunc);
+    
+    Log("[INFO] ExternaCS2 v2.0 Starting...");
 
     // 1. UIAccess Check (Fullscreen Support)
     bool isUIAccessChild = (wcsstr(lpCmdLine, L"--uiaccess-child") != nullptr);
     
     if (!isUIAccessChild) {
+        Log("[INFO] Checking UIAccess...");
         if (uiaccess::AcquireUIAccessToken()) {
-            return 0; // Restarted with admin/uiaccess
+            Log("[+] Restarting with UIAccess...");
+            // Don't pause here, let it restart
+            return 0; 
         }
+        Log("[-] UIAccess failed or not needed (Continuing as is).");
+    } else {
+        Log("[+] Running in UIAccess Child Mode.");
     }
 
     // 2. Load Driver
+    Log("[*] Initializing Driver...");
     InitializeKernelDriver(g_mem);
     atexit(CleanupExtractedDriver);
 
     // 3. Attach
-    if (!g_mem.attach()) {
-        MessageBoxA(0, "CS2 not found!", "Externa Error", MB_OK);
-        return 1;
+    Log("[*] Waiting for cs2.exe...");
+    while (!g_mem.attach()) {
+        Sleep(1000);
+        // Optional: print dots to console only
+        std::cout << "." << std::flush;
     }
+    Log("[+] Attached to CS2!");
     
     // 4. Overlay
-    if (!createOverlay(hInstance, isUIAccessChild)) return 1;
+    Log("[*] Creating Overlay...");
+    if (!createOverlay(hInstance, isUIAccessChild)) {
+        Log("[!] Failed to create overlay! Check DirectX/Drivers.");
+        system("pause");
+        return 1;
+    }
+    Log("[+] Overlay Created!");
     
     // 5. ImGui Init
     ImGui::CreateContext();
