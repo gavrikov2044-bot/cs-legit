@@ -207,6 +207,7 @@ bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
     
     int w = GetSystemMetrics(SM_CXSCREEN);
     int h = GetSystemMetrics(SM_CYSCREEN);
+    Log("[*] Screen Size: " + std::to_string(w) + "x" + std::to_string(h));
         
     // Create Window
     if (isUIAccess) {
@@ -275,14 +276,14 @@ bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
     sd1.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD; // Modern flip model
     sd1.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED; 
     
-    factory->CreateSwapChainForHwnd(g_dev, g_hwnd, &sd1, nullptr, nullptr, &g_swapChain);
+    HRESULT hr = factory->CreateSwapChainForHwnd(g_dev, g_hwnd, &sd1, nullptr, nullptr, &g_swapChain);
     
     factory->Release();
     adapter->Release();
     dxgiDevice->Release();
 
-    if (!g_swapChain) {
-        Log("[!] SwapChain creation failed");
+    if (FAILED(hr) || !g_swapChain) {
+        Log("[!] SwapChain creation failed: " + std::to_string(hr));
         return false;
     }
 
