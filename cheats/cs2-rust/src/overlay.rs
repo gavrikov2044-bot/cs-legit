@@ -13,7 +13,7 @@ use windows::Win32::Graphics::Gdi::{
     Rectangle, FillRect, SetBkMode, TRANSPARENT, SetTextColor,
     GetDC, ReleaseDC, InvalidateRect, CreateFontW, DrawTextW,
     PS_SOLID, GetStockObject, NULL_BRUSH, HRGN, HGDIOBJ, DT_CENTER, DT_VCENTER, DT_SINGLELINE,
-    FW_BOLD,
+    FW_BOLD, FONT_CHARSET, FONT_OUTPUT_PRECISION, FONT_CLIP_PRECISION, FONT_QUALITY,
 };
 use windows::Win32::Graphics::Dwm::{
     DwmExtendFrameIntoClientArea, DwmEnableBlurBehindWindow, DwmIsCompositionEnabled,
@@ -306,10 +306,9 @@ impl Overlay {
     
     fn draw_text(&self, hdc: windows::Win32::Graphics::Gdi::HDC, text: &str, x: i32, y: i32, color: Color, size: i32) {
         unsafe {
-            // CreateFontW with default parameters
             let font = CreateFontW(
                 size, 0, 0, 0, FW_BOLD.0 as i32, 0, 0, 0,
-                1, 0, 0, 5, 0, // ANSI_CHARSET, defaults, CLEARTYPE_QUALITY
+                FONT_CHARSET(1), FONT_OUTPUT_PRECISION(0), FONT_CLIP_PRECISION(0), FONT_QUALITY(5), 0,
                 windows::core::w!("Segoe UI"),
             );
             
@@ -337,7 +336,7 @@ impl Overlay {
         unsafe {
             let font = CreateFontW(
                 size, 0, 0, 0, 400, 0, 0, 0,
-                1, 0, 0, 5, 0, // ANSI_CHARSET, defaults, CLEARTYPE_QUALITY
+                FONT_CHARSET(1), FONT_OUTPUT_PRECISION(0), FONT_CLIP_PRECISION(0), FONT_QUALITY(5), 0,
                 windows::core::w!("Segoe UI"),
             );
             
