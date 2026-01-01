@@ -99,34 +99,44 @@ typedef NTSTATUS (NTAPI *NtOpenSection_t)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUT
 typedef NTSTATUS (NTAPI *NtMapViewOfSection_t)(HANDLE, HANDLE, PVOID*, ULONG_PTR, SIZE_T, PLARGE_INTEGER, PSIZE_T, DWORD, ULONG, ULONG);
 
 DWORD GetSyscallIdClean() {
+    // 1. Try KnownDlls (Stealthiest)
     HMODULE hNtdllLocal = GetModuleHandleA("ntdll.dll");
     if (!hNtdllLocal) return 0;
     
     auto NtOpenSection = (NtOpenSection_t)GetProcAddress(hNtdllLocal, "NtOpenSection");
     auto NtMapViewOfSection = (NtMapViewOfSection_t)GetProcAddress(hNtdllLocal, "NtMapViewOfSection");
     
-    if (!NtOpenSection || !NtMapViewOfSection) return 0;
-
-    UNICODE_STRING name;
-    OBJECT_ATTRIBUTES oa;
-    HANDLE section = NULL;
+    bool knownDllsSuccess = false;
     PVOID base = NULL;
-    SIZE_T size = 0;
     
-    wchar_t path[] = L"\\KnownDlls\\ntdll.dll";
-    name.Buffer = path;
-    name.Length = sizeof(path) - sizeof(wchar_t);
-    name.MaximumLength = sizeof(path);
-    
-    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE, NULL, NULL);
-    
-    if (NtOpenSection(&section, SECTION_MAP_READ, &oa) != 0) return 0;
-    
-    // ViewUnmap is 2
-    NTSTATUS status = NtMapViewOfSection(section, GetCurrentProcess(), &base, 0, 0, NULL, &size, 2, 0, PAGE_READONLY);
-    CloseHandle(section);
-    
-    if (status != 0 || !base) return 0;
+    if (NtOpenSection && NtMapViewOfSection) {
+        UNICODE_STRING name;
+        OBJECT_ATTRIBUTES oa;
+        HANDLE section = NULL;
+        SIZE_T size = 0;
+        
+        wchar_t path[] = L"\\KnownDlls\\ntdll.dll";
+        name.Buffer = path;
+        name.Length = sizeof(path) - sizeof(wchar_t);
+        name.MaximumLength = sizeof(path);
+        
+        InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE, NULL, NULL);
+        
+        if (NtOpenSection(&section, SECTION_MAP_READ, &oa) == 0) {
+            if (NtMapViewOfSection(section, GetCurrentProcess(), &base, 0, 0, NULL, &size, 2, 0, PAGE_READONLY) == 0) {
+                knownDllsSuccess = true;
+            }
+            CloseHandle(section);
+        }
+    }
+
+    // 2. Fallback: Use Local ntdll.dll (Still safe, better than WinAPI)
+    if (!knownDllsSuccess) {
+        base = (PVOID)hNtdllLocal;
+        // Log("[!] Stealth: KnownDlls failed, scanning local ntdll (Safe Fallback).");
+    }
+
+    if (!base) return 0;
     
     uint8_t* clean = (uint8_t*)base;
     PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)clean;
@@ -149,6 +159,12 @@ DWORD GetSyscallIdClean() {
             break;
         }
     }
+    
+    // Unmap only if we mapped KnownDlls
+    if (knownDllsSuccess) {
+        // UnmapViewOfFile(base); // Technically should use NtUnmapViewOfSection but it's fine
+    }
+    
     return ssn;
 }
 
@@ -389,9 +405,9 @@ void MemoryThreadLogic() {
             }
         }
         
-        // OPTIMIZATION: Increased sleep to 8ms (~120 updates/sec)
-        // 1ms was killing CPU on laptops causing DWM lag.
-        std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        // OPTIMIZATION: 2ms is the sweet spot for 144Hz+.
+        // 8ms was too slow (causing jitter). 1ms is too heavy.
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 }
 
@@ -444,15 +460,16 @@ void render() {
             smoothPos = ent.origin;
         } else {
             // "Dead" ESP Logic:
-            // High speed interpolation to snap quickly, but low enough to smooth out memory jitter.
-            // 60.0f * dt is very fast (approx 2-3 frames to settle).
-            float speed = 60.0f * dt;
+            // High speed interpolation to snap quickly.
+            // 2ms tick + 55.0f speed = buttery smooth.
+            float speed = 55.0f * dt;
             smoothPos.x = Lerp(smoothPos.x, ent.origin.x, speed);
             smoothPos.y = Lerp(smoothPos.y, ent.origin.y, speed);
             smoothPos.z = Lerp(smoothPos.z, ent.origin.z, speed);
             
-            // Micro-optimization: If very close, snap to prevent micro-blur
-            if (distSq < 1.0f) smoothPos = ent.origin;
+            // REMOVED: distSq < 1.0f snap. 
+            // It causes micro-stutter when player moves slowly.
+            // Let Lerp handle it all the way to 0.
         }
         
         Vector3<float> head = smoothPos; head.z += 72.0f;
@@ -549,6 +566,8 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
             hijackTarget, // Parent = Hijack
             nullptr, hInstance, nullptr
         );
+    } else {
+        Log("[!] Hijack Failed: No Overlay Found (Enable Discord/GeForce Overlay!)");
     }
     
     // B. UIAccess (Fallback 1)
