@@ -107,29 +107,32 @@ extern "C" NTSTATUS DirectSyscall(
 
 DWORD GetNtReadVirtualMemorySyscall() {
     HMODULE hNtdll = GetModuleHandleA("ntdll.dll");
-    if (!hNtdll) return 0; // Invalid
+    if (!hNtdll) return 0; 
     
     FARPROC func = GetProcAddress(hNtdll, "NtReadVirtualMemory");
     if (!func) return 0;
     
     BYTE* p = (BYTE*)func;
     
-    // Improved SSN Scanner (Halo's Gate style)
-    // We look for 'mov eax, SSN' (B8 XX XX XX XX)
-    // But sometimes functions are hooked (jmp). We need to handle that.
+    // Professional SSN Extraction
+    // Expected:
+    // 4C 8B D1          mov r10, rcx
+    // B8 xx xx xx xx    mov eax, imm32
+    // 0F 05             syscall
     
-    for (int i = 0; i < 32; i++) {
-        // Check for 'mov eax, imm32'
-        if (p[i] == 0xB8) {
-            return *(DWORD*)(p + i + 1);
-        }
-        
-        // Check for 'ret' (C3) - stop if function ends
-        if (p[i] == 0xC3) break;
+    if (p[0] == 0x4C && p[1] == 0x8B && p[2] == 0xD1 && p[3] == 0xB8) {
+         return *(DWORD*)(p + 4);
     }
     
-    // Fallback: If local hook is present, check neighbor functions? 
-    // For now, let's just return 0 to indicate failure and fallback to WinAPI safely.
+    // Check for JMP hook (E9) - Anti-Cheat might be present
+    if (p[0] == 0xE9) {
+        // We could follow the jump, but for safety/stealth, 
+        // falling back to WinAPI is often smarter than analyzing the hook.
+        // However, we can check neighbor functions or use Halos Gate here.
+        // For this version: Fallback.
+        return 0;
+    }
+    
     return 0; 
 }
 
