@@ -1,8 +1,8 @@
 /*
- * EXTERNAL ESP v3.0 (Final Release)
+ * EXTERNAL ESP v5.0 (STABLE)
  * - Architecture: Multi-threaded (Render/Memory Split)
- * - Security: Direct Syscalls via KnownDlls (Ring 3 Stealth)
- * - Features: UIAccess Overlay, Interpolation, Click-Through
+ * - Memory: WinAPI ReadProcessMemory (Maximum Compatibility)
+ * - Overlay: UIAccess + Simple Toggle (No Hooks, No Hijacking)
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -16,54 +16,37 @@
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <dcomp.h>
-#include <winternl.h>
-#include <timeapi.h>
 
-#include <vector>
 #include <array>
 #include <string>
 #include <thread>
 #include <chrono>
-#include <algorithm>
-#include <cmath>
-#include <format>
 #include <atomic>
 #include <mutex>
-#include <optional>
 #include <iostream>
+#include <fstream>
 
-// UI & Features
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
 #include "esp_menu.hpp"
 #include "uiaccess.hpp"
-#include "driver_mapper.hpp"
-#include "embedded_driver.hpp"
 
-// Math
 #include <omath/omath.hpp>
 
-// Deps
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "dcomp.lib")
-#pragma comment(lib, "winmm.lib")
 
-// Forward declarations
-extern "C" void CleanupExtractedDriver();
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-// Global Run State
 std::atomic<bool> g_running = true;
 
-// Define esp_menu globals
 namespace esp_menu {
     bool g_kernelModeActive = false;
 }
 
-// Logger
 void Log(const std::string& msg) {
     std::cout << msg << std::endl;
     std::ofstream f("log.txt", std::ios::app);
@@ -71,105 +54,23 @@ void Log(const std::string& msg) {
 }
 
 // ============================================
-// Offsets
+// Offsets (CS2 - Update if needed)
 // ============================================
 namespace offsets {
-    constexpr uintptr_t dwEntityList = 0x1D13CE8;
-    constexpr uintptr_t dwLocalPlayerController = 0x1E1DC18;
-    constexpr uintptr_t dwViewMatrix = 0x1E323D0;
+    constexpr uintptr_t dwEntityList = 0x1A6A8D0;
+    constexpr uintptr_t dwLocalPlayerController = 0x1A4F178;
+    constexpr uintptr_t dwViewMatrix = 0x1A8F690;
     
-    constexpr uintptr_t m_iHealth = 0x34C;
-    constexpr uintptr_t m_iTeamNum = 0x3EB;
-    constexpr uintptr_t m_pGameSceneNode = 0x330;
+    constexpr uintptr_t m_iHealth = 0x344;
+    constexpr uintptr_t m_iTeamNum = 0x3E3;
+    constexpr uintptr_t m_pGameSceneNode = 0x328;
     constexpr uintptr_t m_vecAbsOrigin = 0xD0;
-    constexpr uintptr_t m_hPlayerPawn = 0x8FC;
-    constexpr uintptr_t m_iszPlayerName = 0x6E8;
-    constexpr uintptr_t m_ArmorValue = 0x1518;
+    constexpr uintptr_t m_hPlayerPawn = 0x80C;
+    constexpr uintptr_t m_ArmorValue = 0x354;
 }
 
 // ============================================
-// Direct Syscalls (KnownDlls Implementation)
-// ============================================
-extern "C" DWORD NtReadVirtualMemory_SSN;
-extern "C" NTSTATUS NtReadVirtualMemory_Direct(
-    HANDLE ProcessHandle, PVOID BaseAddress, PVOID Buffer, SIZE_T Size, PSIZE_T BytesRead
-);
-
-typedef NTSTATUS (NTAPI *NtOpenSection_t)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES);
-typedef NTSTATUS (NTAPI *NtMapViewOfSection_t)(HANDLE, HANDLE, PVOID*, ULONG_PTR, SIZE_T, PLARGE_INTEGER, PSIZE_T, DWORD, ULONG, ULONG);
-
-DWORD GetSyscallIdClean() {
-    // 1. Try KnownDlls (Stealthiest)
-    HMODULE hNtdllLocal = GetModuleHandleA("ntdll.dll");
-    if (!hNtdllLocal) return 0;
-    
-    auto NtOpenSection = (NtOpenSection_t)GetProcAddress(hNtdllLocal, "NtOpenSection");
-    auto NtMapViewOfSection = (NtMapViewOfSection_t)GetProcAddress(hNtdllLocal, "NtMapViewOfSection");
-    
-    bool knownDllsSuccess = false;
-    PVOID base = NULL;
-    
-    if (NtOpenSection && NtMapViewOfSection) {
-        UNICODE_STRING name;
-        OBJECT_ATTRIBUTES oa;
-        HANDLE section = NULL;
-        SIZE_T size = 0;
-        
-        wchar_t path[] = L"\\KnownDlls\\ntdll.dll";
-        name.Buffer = path;
-        name.Length = sizeof(path) - sizeof(wchar_t);
-        name.MaximumLength = sizeof(path);
-        
-        InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE, NULL, NULL);
-        
-        if (NtOpenSection(&section, SECTION_MAP_READ, &oa) == 0) {
-            if (NtMapViewOfSection(section, GetCurrentProcess(), &base, 0, 0, NULL, &size, 2, 0, PAGE_READONLY) == 0) {
-                knownDllsSuccess = true;
-            }
-            CloseHandle(section);
-        }
-    }
-
-    // 2. Fallback: Use Local ntdll.dll (Still safe, better than WinAPI)
-    if (!knownDllsSuccess) {
-        base = (PVOID)hNtdllLocal;
-        // Log("[!] Stealth: KnownDlls failed, scanning local ntdll (Safe Fallback).");
-    }
-
-    if (!base) return 0;
-    
-    uint8_t* clean = (uint8_t*)base;
-    PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)clean;
-    PIMAGE_NT_HEADERS nt = (PIMAGE_NT_HEADERS)(clean + dos->e_lfanew);
-    PIMAGE_EXPORT_DIRECTORY exp = (PIMAGE_EXPORT_DIRECTORY)(clean + nt->OptionalHeader.DataDirectory[0].VirtualAddress);
-    
-    DWORD* names = (DWORD*)(clean + exp->AddressOfNames);
-    DWORD* funcs = (DWORD*)(clean + exp->AddressOfFunctions);
-    WORD* ords = (WORD*)(clean + exp->AddressOfNameOrdinals);
-    
-    DWORD ssn = 0;
-    
-    for (DWORD i = 0; i < exp->NumberOfNames; i++) {
-        const char* fn = (char*)(clean + names[i]);
-        if (strcmp(fn, "NtReadVirtualMemory") == 0) {
-            uint8_t* stub = clean + funcs[ords[i]];
-            if (stub[0] == 0x4C && stub[1] == 0x8B && stub[2] == 0xD1 && stub[3] == 0xB8) {
-                ssn = *(DWORD*)(stub + 4);
-            }
-            break;
-        }
-    }
-    
-    // Unmap only if we mapped KnownDlls
-    if (knownDllsSuccess) {
-        // UnmapViewOfFile(base); // Technically should use NtUnmapViewOfSection but it's fine
-    }
-    
-    return ssn;
-}
-
-// ============================================
-// Cheat Context
+// Cheat Context (Simple & Clean)
 // ============================================
 struct CheatContext {
     // Overlay
@@ -185,30 +86,19 @@ struct CheatContext {
     uintptr_t clientBase = 0;
     HWND gameHwnd = nullptr;
     
-    // Memory Cache
-    struct SmoothEntity {
+    // Entity Cache
+    struct EntityData {
         omath::Vector3<float> origin;
-        int health;
-        int armor;
-        bool valid;
+        int health = 0;
+        int armor = 0;
+        bool valid = false;
     };
     
     std::mutex cacheMutex;
-    std::array<SmoothEntity, 65> entityCache{};
+    std::array<EntityData, 65> entityCache{};
     struct { float m[4][4]; } viewMatrix{};
     
     bool attach() {
-        // 1. Init Syscall
-        DWORD cleanSSN = GetSyscallIdClean();
-        if (cleanSSN != 0) {
-            NtReadVirtualMemory_SSN = cleanSSN;
-            Log("[+] Stealth: Clean SSN Found (" + std::to_string(cleanSSN) + ")");
-        } else {
-            NtReadVirtualMemory_SSN = 0;
-            Log("[!] Stealth: KnownDlls Failed. Using WinAPI.");
-        }
-        
-        // 2. Find Process
         HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         PROCESSENTRY32W entry{sizeof(entry)};
         DWORD pid = 0;
@@ -225,11 +115,9 @@ struct CheatContext {
         
         if (!pid) return false;
         
-        // 3. Open Handle (Minimal Rights)
         processHandle = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
         if (!processHandle) return false;
         
-        // 4. Find Module
         snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid);
         MODULEENTRY32W mod{sizeof(mod)};
         if (Module32FirstW(snap, &mod)) {
@@ -244,32 +132,13 @@ struct CheatContext {
         
         gameHwnd = FindWindowW(nullptr, L"Counter-Strike 2");
         
-        // Removed AttachThreadInput as it causes crashes/deadlocks on some systems in Fullscreen.
-        // For menu interaction in Exclusive Fullscreen, users should use Borderless or Alt-Tab.
-        
         return clientBase != 0;
-    }
-    
-    bool readRaw(uintptr_t addr, void* buf, size_t size) {
-        // Try Syscall
-        if (NtReadVirtualMemory_SSN > 0) {
-            SIZE_T bytesRead = 0;
-            NTSTATUS status = NtReadVirtualMemory_Direct(processHandle, (PVOID)addr, buf, size, &bytesRead);
-            if (status != 0) {
-                // Fallback on error
-                NtReadVirtualMemory_SSN = 0;
-                return ReadProcessMemory(processHandle, (LPCVOID)addr, buf, size, nullptr);
-            }
-            return true;
-        }
-        // Fallback WinAPI
-        return ReadProcessMemory(processHandle, (LPCVOID)addr, buf, size, nullptr);
     }
     
     template<typename T>
     T read(uintptr_t addr) {
         T val{};
-        readRaw(addr, &val, sizeof(T));
+        ReadProcessMemory(processHandle, (LPCVOID)addr, &val, sizeof(T), nullptr);
         return val;
     }
     
@@ -279,33 +148,7 @@ struct CheatContext {
 CheatContext g_ctx;
 
 // ============================================
-// Input Hook (Pro Level Interaction)
-// ============================================
-HHOOK g_mouseHook = nullptr;
-
-LRESULT CALLBACK MouseHookProc(int nCode, WPARAM wParam, LPARAM lParam) {
-    if (nCode == HC_ACTION && esp_menu::g_menuOpen) {
-        MSLLHOOKSTRUCT* mouse = (MSLLHOOKSTRUCT*)lParam;
-        ImGuiIO& io = ImGui::GetIO();
-        
-        // 1. Update ImGui Mouse
-        io.MousePos = ImVec2((float)mouse->pt.x, (float)mouse->pt.y);
-        
-        if (wParam == WM_LBUTTONDOWN) io.MouseDown[0] = true;
-        else if (wParam == WM_LBUTTONUP) io.MouseDown[0] = false;
-        else if (wParam == WM_RBUTTONDOWN) io.MouseDown[1] = true;
-        else if (wParam == WM_RBUTTONUP) io.MouseDown[1] = false;
-        
-        // 2. Block Input if Menu is hovered
-        // We let ImGui handle the logic. If menu is open, we generally consume clicks
-        // to prevent shooting while configuring.
-        return 1; // Eat the input (Game won't see it)
-    }
-    return CallNextHookEx(g_mouseHook, nCode, wParam, lParam);
-}
-
-// ============================================
-// Window Proc
+// Window Proc (Simple)
 // ============================================
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
@@ -313,17 +156,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
     switch (msg) {
     case WM_NCHITTEST:
+        // Click-through when menu is closed
         if (!esp_menu::g_menuOpen) return HTTRANSPARENT;
         break;
         
-    case WM_SIZE:
-        {
-            int w = LOWORD(lParam);
-            int h = HIWORD(lParam);
-            if (w > 0 && h > 0) g_ctx.gameBounds = {0, 0, w, h};
-        }
-        break;
-
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
@@ -332,24 +168,20 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 // ============================================
-// Memory Thread
+// Memory Thread (2ms tick)
 // ============================================
 void MemoryThreadLogic() {
     using namespace omath;
-    Log("[*] Memory Thread Started (8ms tick)"); // LOG CHANGED
+    Log("[*] Memory Thread Started");
     
     while (g_running) {
         if (!g_ctx.ok()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(500)); // Relaxed check
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
             continue;
         }
 
-        // ... reading logic ... (keep same)
-
-        // Read Matrix
         auto vm = g_ctx.read<decltype(g_ctx.viewMatrix)>(g_ctx.clientBase + offsets::dwViewMatrix);
         
-        // Read Entity List
         uintptr_t localController = g_ctx.read<uintptr_t>(g_ctx.clientBase + offsets::dwLocalPlayerController);
         uintptr_t localPawn = 0;
         int localTeam = 0;
@@ -359,14 +191,13 @@ void MemoryThreadLogic() {
             uintptr_t list = g_ctx.read<uintptr_t>(g_ctx.clientBase + offsets::dwEntityList);
             if (list) {
                 uintptr_t entry = g_ctx.read<uintptr_t>(list + 0x8 * ((handle & 0x7FFF) >> 9) + 16);
-                localPawn = g_ctx.read<uintptr_t>(entry + 112 * (handle & 0x1FF));
+                localPawn = g_ctx.read<uintptr_t>(entry + 120 * (handle & 0x1FF));
                 localTeam = g_ctx.read<int>(localPawn + offsets::m_iTeamNum);
             }
         }
 
         uintptr_t entityList = g_ctx.read<uintptr_t>(g_ctx.clientBase + offsets::dwEntityList);
         
-        // Update Cache
         {
             std::lock_guard<std::mutex> lock(g_ctx.cacheMutex);
             g_ctx.viewMatrix = vm;
@@ -374,26 +205,27 @@ void MemoryThreadLogic() {
             if (entityList) {
                 for (int i = 1; i <= 64; i++) {
                     auto& ent = g_ctx.entityCache[i];
+                    ent.valid = false;
                     
                     uintptr_t listEntry = g_ctx.read<uintptr_t>(entityList + (8 * (i & 0x7FFF) >> 9) + 16);
-                    if (!listEntry) { ent.valid = false; continue; }
+                    if (!listEntry) continue;
                     
-                    uintptr_t controller = g_ctx.read<uintptr_t>(listEntry + 112 * (i & 0x1FF));
-                    if (!controller) { ent.valid = false; continue; }
+                    uintptr_t controller = g_ctx.read<uintptr_t>(listEntry + 120 * (i & 0x1FF));
+                    if (!controller) continue;
                     
                     uint32_t pawnHandle = g_ctx.read<uint32_t>(controller + offsets::m_hPlayerPawn);
-                    if (!pawnHandle) { ent.valid = false; continue; }
+                    if (!pawnHandle) continue;
                     
                     uintptr_t listEntry2 = g_ctx.read<uintptr_t>(entityList + 0x8 * ((pawnHandle & 0x7FFF) >> 9) + 16);
-                    uintptr_t pawn = g_ctx.read<uintptr_t>(listEntry2 + 112 * (pawnHandle & 0x1FF));
+                    uintptr_t pawn = g_ctx.read<uintptr_t>(listEntry2 + 120 * (pawnHandle & 0x1FF));
                     
-                    if (!pawn || pawn == localPawn) { ent.valid = false; continue; }
+                    if (!pawn || pawn == localPawn) continue;
                     
                     int health = g_ctx.read<int>(pawn + offsets::m_iHealth);
-                    if (health <= 0 || health > 100) { ent.valid = false; continue; }
+                    if (health <= 0 || health > 100) continue;
 
                     int team = g_ctx.read<int>(pawn + offsets::m_iTeamNum);
-                    if (team == localTeam) { ent.valid = false; continue; }
+                    if (team == localTeam) continue;
 
                     uintptr_t node = g_ctx.read<uintptr_t>(pawn + offsets::m_pGameSceneNode);
                     
@@ -405,16 +237,14 @@ void MemoryThreadLogic() {
             }
         }
         
-        // OPTIMIZATION: 2ms is the sweet spot for 144Hz+.
-        // 8ms was too slow (causing jitter). 1ms is too heavy.
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 }
 
 // ============================================
-// Render Loop
+// Render (Interpolated ESP)
 // ============================================
-float Lerp(float a, float b, float t) { return a + (b - a) * t; }
+float Lerp(float a, float b, float t) { return a + (b - a) * (t > 1.0f ? 1.0f : t); }
 
 void render() {
     using namespace omath;
@@ -424,9 +254,8 @@ void render() {
     auto* draw = ImGui::GetBackgroundDrawList();
     float dt = ImGui::GetIO().DeltaTime;
     
-    // Copy cache
     decltype(g_ctx.viewMatrix) matrix;
-    std::array<CheatContext::SmoothEntity, 65> entities;
+    std::array<CheatContext::EntityData, 65> entities;
     {
         std::lock_guard<std::mutex> lock(g_ctx.cacheMutex);
         matrix = g_ctx.viewMatrix;
@@ -442,34 +271,28 @@ void render() {
         return true;
     };
 
+    static std::array<Vector3<float>, 65> s_smoothPos{};
+
     for (int i = 1; i <= 64; i++) {
         auto& ent = entities[i];
         if (!ent.valid) continue;
         
-        static std::array<Vector3<float>, 65> s_smoothPos{};
         Vector3<float>& smoothPos = s_smoothPos[i];
         
         if (smoothPos.x == 0 && smoothPos.y == 0) smoothPos = ent.origin;
         
-        float distSq = (smoothPos.x - ent.origin.x)*(smoothPos.x - ent.origin.x) + 
-                       (smoothPos.y - ent.origin.y)*(smoothPos.y - ent.origin.y) + 
-                       (smoothPos.z - ent.origin.z)*(smoothPos.z - ent.origin.z);
-                       
-        // Teleport check
-        if (distSq > 400.0f) {
+        float dx = ent.origin.x - smoothPos.x;
+        float dy = ent.origin.y - smoothPos.y;
+        float dz = ent.origin.z - smoothPos.z;
+        float distSq = dx*dx + dy*dy + dz*dz;
+        
+        if (distSq > 1000.0f) {
             smoothPos = ent.origin;
         } else {
-            // "Dead" ESP Logic:
-            // High speed interpolation to snap quickly.
-            // 2ms tick + 55.0f speed = buttery smooth.
-            float speed = 55.0f * dt;
+            float speed = 50.0f * dt;
             smoothPos.x = Lerp(smoothPos.x, ent.origin.x, speed);
             smoothPos.y = Lerp(smoothPos.y, ent.origin.y, speed);
             smoothPos.z = Lerp(smoothPos.z, ent.origin.z, speed);
-            
-            // REMOVED: distSq < 1.0f snap. 
-            // It causes micro-stutter when player moves slowly.
-            // Let Lerp handle it all the way to 0.
         }
         
         Vector3<float> head = smoothPos; head.z += 72.0f;
@@ -478,29 +301,26 @@ void render() {
         if (!w2s(smoothPos, s_orig) || !w2s(head, s_head)) continue;
 
         float h = s_orig.y - s_head.y;
-        float w = h * 0.4f;
-        float x = s_head.x - w / 2;
-        
-        // CORNER BOX IMPLEMENTATION (More "Legit/Pro" look)
+        float boxW = h * 0.4f;
+        float x = s_head.x - boxW / 2;
+
         if (s.boxESP) {
-             // Black Outline
-             draw->AddRect(ImVec2(x-1, s_head.y-1), ImVec2(x+w+1, s_orig.y+1), 0xFF000000, 0, 0, 3.0f);
-             // Color Box
-             draw->AddRect(ImVec2(x, s_head.y), ImVec2(x+w, s_orig.y), ImGui::ColorConvertFloat4ToU32(ImVec4(1,0,0,1)), 0, 0, 1.5f);
+             draw->AddRect(ImVec2(x-1, s_head.y-1), ImVec2(x+boxW+1, s_orig.y+1), 0xFF000000, 0, 0, 3.0f);
+             draw->AddRect(ImVec2(x, s_head.y), ImVec2(x+boxW, s_orig.y), 0xFF0000FF, 0, 0, 1.5f);
         }
 
         if (s.healthBar) {
             float healthH = h * (ent.health / 100.0f);
-            draw->AddRectFilled(ImVec2(x-6, s_head.y), ImVec2(x-2, s_orig.y), 0x80000000); 
-            draw->AddRectFilled(ImVec2(x-5, s_orig.y - healthH), ImVec2(x-3, s_orig.y), 0xFF00FF00); 
-            draw->AddRect(ImVec2(x-6, s_head.y), ImVec2(x-2, s_orig.y), 0xFF000000, 0, 0, 1.0f); 
+            draw->AddRectFilled(ImVec2(x-6, s_head.y), ImVec2(x-2, s_orig.y), 0x80000000);
+            draw->AddRectFilled(ImVec2(x-5, s_orig.y - healthH), ImVec2(x-3, s_orig.y), 0xFF00FF00);
+            draw->AddRect(ImVec2(x-6, s_head.y), ImVec2(x-2, s_orig.y), 0xFF000000, 0, 0, 1.0f);
         }
 
         if (s.armorBar && ent.armor > 0) {
             float armorH = h * (ent.armor / 100.0f);
-            draw->AddRectFilled(ImVec2(x+w+2, s_head.y), ImVec2(x+w+6, s_orig.y), 0x80000000); 
-            draw->AddRectFilled(ImVec2(x+w+3, s_orig.y - armorH), ImVec2(x+w+5, s_orig.y), 0xFFEDA100); 
-            draw->AddRect(ImVec2(x+w+2, s_head.y), ImVec2(x+w+6, s_orig.y), 0xFF000000, 0, 0, 1.0f); 
+            draw->AddRectFilled(ImVec2(x+boxW+2, s_head.y), ImVec2(x+boxW+6, s_orig.y), 0x80000000);
+            draw->AddRectFilled(ImVec2(x+boxW+3, s_orig.y - armorH), ImVec2(x+boxW+5, s_orig.y), 0xFFEDA100);
+            draw->AddRect(ImVec2(x+boxW+2, s_head.y), ImVec2(x+boxW+6, s_orig.y), 0xFF000000, 0, 0, 1.0f);
         }
     }
 }
@@ -513,34 +333,26 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     FILE* f; freopen_s(&f, "CONOUT$", "w", stdout); freopen_s(&f, "CONOUT$", "w", stderr);
     std::ofstream("log.txt", std::ios::trunc);
     
-    Log("[INFO] ExternaCS2 v3.0 Final Starting...");
+    Log("[INFO] ExternaCS2 v5.0 STABLE Starting...");
 
-    // 1. UIAccess
+    // UIAccess (for Borderless Fullscreen)
     bool isUIAccessChild = (wcsstr(lpCmdLine, L"--uiaccess-child") != nullptr);
     if (!isUIAccessChild) {
-        if (uiaccess::AcquireUIAccessToken()) return 0; 
+        if (uiaccess::AcquireUIAccessToken()) return 0;
     }
 
-    // 2. Driver (Optional Mapping)
-    Log("[*] Initializing Driver...");
-    auto drv = DriverExtractor::Extract();
-    if (drv.success) {
-        esp_menu::g_kernelModeActive = true; 
-    }
-    atexit(CleanupExtractedDriver);
-
-    // 3. Attach Logic
+    // Attach
     Log("[*] Waiting for cs2.exe...");
     while (!g_ctx.attach()) {
         Sleep(1000);
         std::cout << "." << std::flush;
     }
-    Log("[+] Attached!");
+    Log("[+] Attached to cs2.exe!");
     
-    // 4. Memory Thread (Auto-Join)
+    // Memory Thread
     std::jthread memoryThread(MemoryThreadLogic);
 
-    // 5. Overlay Strategy (Hijack -> UIAccess -> Standard)
+    // Overlay Window
     WNDCLASSEXW wc = { sizeof(wc) };
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = WndProc;
@@ -552,49 +364,27 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     int h = GetSystemMetrics(SM_CYSCREEN);
     g_ctx.gameBounds = {0, 0, w, h};
 
-    // A. Try Hijack (Discord/NVIDIA)
-    HWND hijackTarget = FindWindowW(L"DiscordOverlayHost", nullptr);
-    if (!hijackTarget) hijackTarget = FindWindowW(L"CEF-OSC-WIDGET", nullptr); // NVIDIA
-    
-    if (hijackTarget) {
-        Log("[+] Hijacking Overlay: " + std::to_string((uintptr_t)hijackTarget));
-        g_ctx.overlayHwnd = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-            wc.lpszClassName, L"Externa Overlay",
-            WS_POPUP | WS_VISIBLE,
-            0, 0, w, h,
-            hijackTarget, // Parent = Hijack
-            nullptr, hInstance, nullptr
-        );
-    } else {
-        Log("[!] Hijack Failed: No Overlay Found (Enable Discord/GeForce Overlay!)");
-    }
-    
-    // B. UIAccess (Fallback 1)
-    if (!g_ctx.overlayHwnd && isUIAccessChild) {
-        Log("[*] Creating UIAccess Window (Band)...");
+    if (isUIAccessChild) {
+        Log("[*] Creating UIAccess Overlay...");
         g_ctx.overlayHwnd = uiaccess::CreateUIAccessWindow(
             WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-            wc.lpszClassName, L"Externa Overlay", WS_POPUP, 0, 0, w, h, nullptr, nullptr, hInstance, nullptr
+            wc.lpszClassName, L"", WS_POPUP, 0, 0, w, h, nullptr, nullptr, hInstance, nullptr
         );
-    } 
-    
-    // C. Standard (Fallback 2)
-    if (!g_ctx.overlayHwnd) {
-        Log("[*] Creating Standard Window...");
+    } else {
+        Log("[*] Creating Standard Overlay...");
         g_ctx.overlayHwnd = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, 
-            wc.lpszClassName, L"Externa Overlay", WS_POPUP, 0, 0, w, h, 0, 0, hInstance, 0
+            WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            wc.lpszClassName, L"", WS_POPUP, 0, 0, w, h, 0, 0, hInstance, 0
         );
     }
 
-    if (!g_ctx.overlayHwnd) return 1;
+    if (!g_ctx.overlayHwnd) { Log("[!] Failed to create overlay!"); return 1; }
     
     // Transparency
     MARGINS margins = {-1};
     DwmExtendFrameIntoClientArea(g_ctx.overlayHwnd, &margins);
     
-    // DX11 Init
+    // DX11
     D3D_FEATURE_LEVEL fls[] = {D3D_FEATURE_LEVEL_11_0};
     D3D11CreateDevice(0, D3D_DRIVER_TYPE_HARDWARE, 0, D3D11_CREATE_DEVICE_BGRA_SUPPORT, fls, 1, D3D11_SDK_VERSION, &g_ctx.dev, nullptr, &g_ctx.ctx);
     
@@ -607,12 +397,31 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     sd1.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     sd1.SampleDesc.Count = 1;
     sd1.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    sd1.BufferCount = 1;
-    sd1.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-    sd1.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED; 
+    sd1.BufferCount = 2;
+    sd1.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    sd1.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
     sd1.Scaling = DXGI_SCALING_STRETCH;
     
-    factory->CreateSwapChainForHwnd(g_ctx.dev, g_ctx.overlayHwnd, &sd1, nullptr, nullptr, &g_ctx.swapChain);
+    HRESULT hr = factory->CreateSwapChainForComposition(g_ctx.dev, &sd1, nullptr, &g_ctx.swapChain);
+    if (FAILED(hr)) {
+        // Fallback for older systems
+        sd1.BufferCount = 1;
+        sd1.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+        sd1.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
+        factory->CreateSwapChainForHwnd(g_ctx.dev, g_ctx.overlayHwnd, &sd1, nullptr, nullptr, &g_ctx.swapChain);
+    } else {
+        // Composition SwapChain - need DComp
+        IDCompositionDevice* dcomp = nullptr;
+        DCompositionCreateDevice(dxgiDevice, __uuidof(IDCompositionDevice), (void**)&dcomp);
+        IDCompositionTarget* target = nullptr;
+        dcomp->CreateTargetForHwnd(g_ctx.overlayHwnd, TRUE, &target);
+        IDCompositionVisual* visual = nullptr;
+        dcomp->CreateVisual(&visual);
+        visual->SetContent(g_ctx.swapChain);
+        target->SetRoot(visual);
+        dcomp->Commit();
+    }
+    
     factory->Release(); adapter->Release(); dxgiDevice->Release();
 
     ID3D11Texture2D* backBuffer = nullptr;
@@ -622,16 +431,14 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
 
     ShowWindow(g_ctx.overlayHwnd, SW_SHOW);
     
-    // ImGui Init
+    // ImGui
     ImGui::CreateContext();
     ImGui_ImplWin32_Init(g_ctx.overlayHwnd);
     ImGui_ImplDX11_Init(g_ctx.dev, g_ctx.ctx);
     
-    // Install Mouse Hook
-    g_mouseHook = SetWindowsHookEx(WH_MOUSE_LL, MouseHookProc, GetModuleHandle(nullptr), 0);
-    Log("[+] Input Hook Installed");
+    Log("[+] Overlay Ready! Press INSERT to open menu.");
 
-    // Loop
+    // Main Loop
     MSG msg{};
     while (g_running) {
         while (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)) {
@@ -639,49 +446,27 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
             if (msg.message == WM_QUIT) g_running = false;
         }
         
-        // Input Toggle
-        if (GetAsyncKeyState(VK_INSERT) & 1) esp_menu::g_menuOpen = !esp_menu::g_menuOpen;
-        
-        // REMOVED OLD FOCUS LOGIC (No longer needed with Hook)
-        
-        // Check Game
-        if (g_ctx.processHandle) {
-            DWORD exitCode = 0;
-            if (GetExitCodeProcess(g_ctx.processHandle, &exitCode) && exitCode != STILL_ACTIVE) g_running = false;
+        // Menu Toggle
+        if (GetAsyncKeyState(VK_INSERT) & 1) {
+            esp_menu::g_menuOpen = !esp_menu::g_menuOpen;
+            
+            LONG_PTR exStyle = GetWindowLongPtr(g_ctx.overlayHwnd, GWL_EXSTYLE);
+            if (esp_menu::g_menuOpen) {
+                exStyle &= ~WS_EX_TRANSPARENT;
+                SetWindowLongPtr(g_ctx.overlayHwnd, GWL_EXSTYLE, exStyle);
+                SetForegroundWindow(g_ctx.overlayHwnd);
+            } else {
+                exStyle |= WS_EX_TRANSPARENT;
+                SetWindowLongPtr(g_ctx.overlayHwnd, GWL_EXSTYLE, exStyle);
+            }
         }
         
-        // FOCUS CHECK: Only render if Game or Menu is active
-        HWND fg = GetForegroundWindow();
-        bool isGameActive = (fg == g_ctx.gameHwnd);
-        bool isOverlayActive = (fg == g_ctx.overlayHwnd);
-        
-        static bool wasActive = true;
-        
-        // DEBOUNCE: Don't panic on micro-focus loss (e.g. during alt-tab transition)
-        static int focusLossCounter = 0;
-        
-        if (!isGameActive && !isOverlayActive && !esp_menu::g_menuOpen) {
-            focusLossCounter++;
-            if (focusLossCounter > 60) { // Wait ~1 sec (60 frames) before sleeping
-                if (wasActive) {
-                    // Log("[-] Focus lost. Pausing..."); // Spam removed
-                    wasActive = false;
-                }
-                
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                
-                // Just clear and present once, then wait
-                float clear[4] = {0,0,0,0};
-                g_ctx.ctx->OMSetRenderTargets(1, &g_ctx.renderTarget, nullptr);
-                g_ctx.ctx->ClearRenderTargetView(g_ctx.renderTarget, clear);
-                g_ctx.swapChain->Present(1, 0);
-                continue;
-            }
-        } else {
-            focusLossCounter = 0;
-            if (!wasActive) {
-                // Log("[+] Focus regained."); // Spam removed
-                wasActive = true;
+        // Check if game closed
+        if (g_ctx.processHandle) {
+            DWORD exitCode = 0;
+            if (GetExitCodeProcess(g_ctx.processHandle, &exitCode) && exitCode != STILL_ACTIVE) {
+                Log("[!] Game closed. Exiting...");
+                g_running = false;
             }
         }
 
@@ -701,7 +486,11 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     }
 
     ImGui_ImplDX11_Shutdown(); ImGui_ImplWin32_Shutdown(); ImGui::DestroyContext();
+    if (g_ctx.renderTarget) g_ctx.renderTarget->Release();
+    if (g_ctx.swapChain) g_ctx.swapChain->Release();
+    if (g_ctx.ctx) g_ctx.ctx->Release();
+    if (g_ctx.dev) g_ctx.dev->Release();
     DestroyWindow(g_ctx.overlayHwnd);
+    Log("[*] Cleanup complete. Goodbye!");
     return 0;
 }
-

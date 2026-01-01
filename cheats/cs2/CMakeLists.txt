@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(ExternaCS2 VERSION 2.0 LANGUAGES CXX ASM_MASM)
+project(ExternaCS2 VERSION 5.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,23 +29,13 @@ FetchContent_MakeAvailable(omath)
 # Libraries
 # ============================================
 
-# 1. Driver Library (Ring 0)
-add_library(driver_lib STATIC
-    ../../libraries/driver/driver_mapper.cpp
-    ../../libraries/driver/shellcode.cpp
-    ../../libraries/driver/workitem_executor.cpp
-    ../../libraries/driver/vulnerable_drivers.cpp
-)
-target_include_directories(driver_lib PUBLIC ../../libraries/driver)
-target_compile_definitions(driver_lib PRIVATE WIN32_LEAN_AND_MEAN)
-
-# 2. UIAccess Library (Fullscreen)
+# 1. UIAccess Library (Fullscreen)
 add_library(uiaccess_lib STATIC
     ../../libraries/uiaccess/uiaccess.cpp
 )
 target_include_directories(uiaccess_lib PUBLIC ../../libraries/uiaccess)
 
-# 3. ImGui Helper
+# 2. ImGui Helper
 add_library(imgui_lib STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
@@ -62,24 +52,19 @@ target_include_directories(imgui_lib PUBLIC
 # ============================================
 # Main Executable
 # ============================================
-# ASM for Syscalls
-add_library(syscall_asm OBJECT src/syscall.asm)
-set_target_properties(syscall_asm PROPERTIES LINKER_LANGUAGE CXX)
-
 add_executable(ExternaCS2 WIN32
     src/main.cpp
     src/esp_menu.hpp
-    $<TARGET_OBJECTS:syscall_asm>
 )
 
 target_link_libraries(ExternaCS2 PRIVATE
-    driver_lib
     uiaccess_lib
     imgui_lib
     omath::omath
     d3d11
     dxgi
     dwmapi
+    dcomp
 )
 
 # Optimization Flags
