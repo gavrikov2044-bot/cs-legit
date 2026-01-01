@@ -62,6 +62,11 @@ HWND g_hwnd = nullptr;
 RECT g_gameBounds{};
 std::atomic<bool> g_running = true;
 
+// Define esp_menu globals
+namespace esp_menu {
+    bool g_kernelModeActive = false;
+}
+
 // ============================================
 // Offsets (Stable)
 // ============================================
@@ -365,7 +370,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     }
 
     // 2. Load Driver
-    InitializeKernelDriver();
+    InitializeKernelDriver(g_mem);
     atexit(CleanupExtractedDriver);
 
     // 3. Attach

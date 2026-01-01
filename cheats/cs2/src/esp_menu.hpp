@@ -17,14 +17,10 @@
 
 // Forward declarations for global variables (defined in main.cpp)
 extern std::atomic<bool> g_running;
-#if LUAJIT_ENABLED
-extern bool g_luaEnabled;
-#endif
-#if DRIVER_MAPPER_ENABLED
-extern bool g_kernelModeActive;
-#endif
 
 namespace esp_menu {
+    // Driver state
+    extern bool g_kernelModeActive;
     
     // ============================================
     // Menu State
