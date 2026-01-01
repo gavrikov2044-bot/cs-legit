@@ -146,7 +146,9 @@ public:
     
     bool attach() {
         // Init SSN
+        // Re-enabled with robust scanner
         g_syscallSSN = GetNtReadVirtualMemorySyscall();
+        
         if (g_syscallSSN != 0) {
             Log("[+] Stealth Mode: Dynamic SSN Found (" + std::to_string(g_syscallSSN) + ")");
         } else {
@@ -661,17 +663,30 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         // Menu Toggle (INSERT)
         if (GetAsyncKeyState(VK_INSERT) & 1) {
             esp_menu::g_menuOpen = !esp_menu::g_menuOpen;
+        }
+
+        // CLICK-THROUGH LOGIC (ROBUST)
+        static bool lastMenuState = !esp_menu::g_menuOpen; // Force update on start
+        if (esp_menu::g_menuOpen != lastMenuState) {
+            lastMenuState = esp_menu::g_menuOpen;
             
-            // Click-through logic
-            LONG ex = GetWindowLong(g_hwnd, GWL_EXSTYLE);
+            LONG_PTR exStyle = GetWindowLongPtr(g_hwnd, GWL_EXSTYLE);
+            
             if (esp_menu::g_menuOpen) {
-                SetWindowLong(g_hwnd, GWL_EXSTYLE, ex & ~WS_EX_TRANSPARENT);
+                // OPEN: Interactive
+                exStyle &= ~WS_EX_TRANSPARENT;
+                exStyle &= ~WS_EX_LAYERED; // Remove Layered to use DWM fully
+                SetWindowLongPtr(g_hwnd, GWL_EXSTYLE, exStyle);
                 SetForegroundWindow(g_hwnd);
             } else {
-                SetWindowLong(g_hwnd, GWL_EXSTYLE, ex | WS_EX_TRANSPARENT);
-                    SetForegroundWindow(g_mem.gameHwnd);
-                }
+                // CLOSED: Click-through
+                exStyle |= WS_EX_TRANSPARENT;
+                exStyle |= WS_EX_LAYERED; // Layered needed for input transparency
+                SetWindowLongPtr(g_hwnd, GWL_EXSTYLE, exStyle);
+                // Fix black screen potential by setting full opacity
+                SetLayeredWindowAttributes(g_hwnd, 0, 255, LWA_ALPHA);
             }
+        }
             
         // Frame
         ImGui_ImplDX11_NewFrame();
