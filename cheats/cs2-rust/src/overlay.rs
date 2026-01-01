@@ -317,7 +317,8 @@ impl Overlay {
                 (color.r as u32) | ((color.g as u32) << 8) | ((color.b as u32) << 16)
             ));
             
-            let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+            let mut wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+            let len = wide.len() - 1;
             let mut rect = RECT {
                 left: x - 150,
                 top: y,
@@ -325,7 +326,7 @@ impl Overlay {
                 bottom: y + size + 5,
             };
             
-            DrawTextW(hdc, &mut wide[..wide.len()-1], &mut rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            DrawTextW(hdc, &mut wide[..len], &mut rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             
             SelectObject(hdc, old_font);
             DeleteObject(HGDIOBJ(font.0));
@@ -345,7 +346,8 @@ impl Overlay {
                 (color.r as u32) | ((color.g as u32) << 8) | ((color.b as u32) << 16)
             ));
             
-            let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+            let mut wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+            let len = wide.len() - 1;
             let mut rect = RECT {
                 left: x,
                 top: y,
@@ -353,7 +355,7 @@ impl Overlay {
                 bottom: y + size + 5,
             };
             
-            DrawTextW(hdc, &mut wide[..wide.len()-1], &mut rect, DT_SINGLELINE);
+            DrawTextW(hdc, &mut wide[..len], &mut rect, DT_SINGLELINE);
             
             SelectObject(hdc, old_font);
             DeleteObject(HGDIOBJ(font.0));
