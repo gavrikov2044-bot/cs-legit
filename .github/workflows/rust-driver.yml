@@ -23,33 +23,62 @@ jobs:
         targets: x86_64-pc-windows-msvc
         components: rust-src
     
-    - name: Setup EWDK
+    - name: Install WDK via winget
       run: |
-        # Download Enterprise WDK (EWDK) - self-contained WDK
-        # Using cargo-wdk approach instead
-        echo "WDK will be handled by cargo-wdk"
+        # Try winget first
+        winget install Microsoft.WindowsWDK --accept-source-agreements --accept-package-agreements || true
       shell: powershell
-    
-    - name: Install cargo-wdk
-      run: cargo install cargo-wdk
       continue-on-error: true
+    
+    - name: Download WDK Installer
+      run: |
+        # Download WDK 10 installer
+        $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2249371"
+        $installerPath = "$env:TEMP\wdksetup.exe"
+        Write-Host "Downloading WDK..."
+        Invoke-WebRequest -Uri $wdkUrl -OutFile $installerPath -UseBasicParsing
+        Write-Host "Installing WDK (this may take a while)..."
+        Start-Process -FilePath $installerPath -ArgumentList "/quiet", "/norestart" -Wait
+        Write-Host "WDK installation completed"
+      shell: powershell
+      continue-on-error: true
+    
+    - name: Setup WDK Environment
+      run: |
+        # Find WDK installation
+        $wdkPath = "C:\Program Files (x86)\Windows Kits\10"
+        if (Test-Path $wdkPath) {
+          Write-Host "WDK found at: $wdkPath"
+          $env:WDK_ROOT = $wdkPath
+          echo "WDK_ROOT=$wdkPath" >> $env:GITHUB_ENV
+        } else {
+          Write-Host "WDK not found, build may fail"
+        }
+      shell: powershell
     
     - name: Build Driver
       working-directory: cheats/cs2-rust/driver
       run: |
-        # Try standard build first
-        cargo +nightly build --release -Z build-std=core,alloc --target x86_64-pc-windows-msvc 2>&1 || echo "Build requires WDK - skipping for now"
+        cargo +nightly build --release -Z build-std=core,alloc --target x86_64-pc-windows-msvc
       continue-on-error: true
     
-    - name: Create placeholder
+    - name: Check Build Output
       run: |
-        mkdir -p cheats/cs2-rust/driver/target/release
-        echo "Driver build requires local WDK installation" > cheats/cs2-rust/driver/target/release/BUILD_NOTE.txt
-      shell: bash
+        if (Test-Path "cheats/cs2-rust/driver/target/x86_64-pc-windows-msvc/release/*.sys") {
+          Write-Host "Driver built successfully!"
+        } else {
+          Write-Host "Driver build failed or produced no .sys file"
+          # List what was built
+          Get-ChildItem -Recurse cheats/cs2-rust/driver/target -ErrorAction SilentlyContinue | Select-Object FullName
+        }
+      shell: powershell
     
     - name: Upload Driver Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: externa-driver-source
-        path: cheats/cs2-rust/driver/
+        name: externa-driver
+        path: |
+          cheats/cs2-rust/driver/target/x86_64-pc-windows-msvc/release/*.sys
+          cheats/cs2-rust/driver/target/x86_64-pc-windows-msvc/release/*.dll
+          cheats/cs2-rust/driver/src/
         if-no-files-found: warn
