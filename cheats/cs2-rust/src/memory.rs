@@ -51,6 +51,11 @@ impl GameMemory {
         })
     }
     
+    /// Get client.dll base address
+    pub fn get_client_base(&self) -> usize {
+        self.client_base
+    }
+    
     /// Find process by name
     fn find_process(name: &str) -> Result<u32> {
         unsafe {

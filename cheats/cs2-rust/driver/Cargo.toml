@@ -1,0 +1,28 @@
+[package]
+name = "externa-driver"
+version = "1.0.0"
+edition = "2021"
+authors = ["Externa Team"]
+description = "Kernel Driver for Externa CS2 (Based on Valthrun Zenith)"
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+# Windows Driver Kit bindings
+wdk = "0.3"
+wdk-sys = "0.3"
+
+[build-dependencies]
+wdk-build = "0.3"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
+

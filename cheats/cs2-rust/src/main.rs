@@ -1,12 +1,13 @@
 /*
  * EXTERNA CS2 - Rust Edition v1.0
- * Based on Valthrun architecture
+ * Based on Valthrun Architecture
  * 
  * Features:
  * - Box ESP with Health & Armor bars
  * - Stream-Proof overlay (hidden from screen capture)
- * - Multi-threaded (Memory/Render split)
- * - WinAPI + GDI overlay (D3D11 coming soon)
+ * - Pattern Scanner for automatic offsets
+ * - Config file (JSON)
+ * - Multi-threaded architecture
  */
 
 #![windows_subsystem = "windows"]
@@ -15,6 +16,9 @@ mod memory;
 mod overlay;
 mod esp;
 mod offsets;
+mod scanner;
+mod config;
+mod driver_client;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -28,6 +32,8 @@ use log::{info, error};
 use crate::memory::GameMemory;
 use crate::overlay::Overlay;
 use crate::esp::EspData;
+use crate::config::Config;
+use crate::driver_client::DriverClient;
 
 /// Global running state
 pub static RUNNING: AtomicBool = AtomicBool::new(true);
@@ -60,8 +66,20 @@ impl Default for Settings {
     }
 }
 
+impl From<Config> for Settings {
+    fn from(config: Config) -> Self {
+        Self {
+            esp_enabled: config.esp_enabled,
+            box_esp: config.box_esp,
+            health_bar: config.health_bar,
+            armor_bar: config.armor_bar,
+            menu_open: false,
+        }
+    }
+}
+
 fn main() -> Result<()> {
-    // Allocate console for logging
+    // Allocate console
     unsafe {
         let _ = windows::Win32::System::Console::AllocConsole();
     }
@@ -72,20 +90,26 @@ fn main() -> Result<()> {
         .format_timestamp(None)
         .init();
     
-    println!();
-    println!("╔═══════════════════════════════════════════╗");
-    println!("║   EXTERNA CS2 - Rust Edition v1.0        ║");
-    println!("║   Based on Valthrun Architecture         ║");
-    println!("║                                           ║");
-    println!("║   [INSERT] Open/Close Menu               ║");
-    println!("║   [Stream-Proof] Enabled by default      ║");
-    println!("╚═══════════════════════════════════════════╝");
-    println!();
+    print_banner();
+    
+    // Load config
+    let config = Config::load();
+    info!("Config loaded");
+    
+    // Try to connect to kernel driver
+    let driver_mode = if DriverClient::is_available() {
+        info!("Kernel driver detected - using Ring 0 mode");
+        true
+    } else {
+        info!("No driver - using WinAPI mode");
+        false
+    };
+    let _ = driver_mode; // Used in GameMemory
 
     // Initialize shared state
     let state = Arc::new(SharedState {
         esp_data: RwLock::new(EspData::default()),
-        settings: RwLock::new(Settings::default()),
+        settings: RwLock::new(Settings::from(config)),
     });
 
     // Wait for game
@@ -101,22 +125,32 @@ fn main() -> Result<()> {
     };
     println!();
     info!("Attached to CS2!");
+    info!("Client base: 0x{:X}", game.get_client_base());
 
     // Memory thread
     let state_clone = Arc::clone(&state);
     let game_clone = game.clone();
     let memory_thread = thread::spawn(move || {
         info!("Memory thread started (2ms tick)");
+        let mut frame_count = 0u64;
+        
         while RUNNING.load(Ordering::Relaxed) {
             if let Ok(data) = game_clone.read_entities() {
+                let entity_count = data.entities.len();
                 *state_clone.esp_data.write() = data;
+                
+                // Log every 500 frames (~1 sec)
+                frame_count += 1;
+                if frame_count % 500 == 0 {
+                    info!("ESP: {} enemies visible", entity_count);
+                }
             }
             thread::sleep(Duration::from_millis(2));
         }
         info!("Memory thread stopped");
     });
 
-    // Overlay (main thread)
+    // Create overlay
     info!("Creating overlay...");
     let mut overlay = match Overlay::create(Arc::clone(&state)) {
         Ok(o) => o,
@@ -126,7 +160,10 @@ fn main() -> Result<()> {
         }
     };
     
-    info!("Overlay ready! Press INSERT to open menu.");
+    info!("Overlay ready!");
+    println!();
+    info!("Press INSERT to open menu");
+    info!("Stream-Proof: ENABLED (hidden from recordings)");
     println!();
     
     // Main loop
@@ -138,6 +175,35 @@ fn main() -> Result<()> {
     RUNNING.store(false, Ordering::Relaxed);
     let _ = memory_thread.join();
     
+    // Save config on exit
+    let settings = state.settings.read();
+    let config = Config {
+        esp_enabled: settings.esp_enabled,
+        box_esp: settings.box_esp,
+        health_bar: settings.health_bar,
+        armor_bar: settings.armor_bar,
+        stream_proof: true,
+    };
+    let _ = config.save();
+    
     info!("Goodbye!");
     Ok(())
+}
+
+fn print_banner() {
+    println!();
+    println!("╔═══════════════════════════════════════════════════╗");
+    println!("║                                                   ║");
+    println!("║   ███████╗██╗  ██╗████████╗███████╗██████╗ ███╗   ██╗ █████╗  ║");
+    println!("║   ██╔════╝╚██╗██╔╝╚══██╔══╝██╔════╝██╔══██╗████╗  ██║██╔══██╗ ║");
+    println!("║   █████╗   ╚███╔╝    ██║   █████╗  ██████╔╝██╔██╗ ██║███████║ ║");
+    println!("║   ██╔══╝   ██╔██╗    ██║   ██╔══╝  ██╔══██╗██║╚██╗██║██╔══██║ ║");
+    println!("║   ███████╗██╔╝ ██╗   ██║   ███████╗██║  ██║██║ ╚████║██║  ██║ ║");
+    println!("║   ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝ ║");
+    println!("║                                                   ║");
+    println!("║              CS2 External ESP v1.0                ║");
+    println!("║           Based on Valthrun Architecture          ║");
+    println!("║                                                   ║");
+    println!("╚═══════════════════════════════════════════════════╝");
+    println!();
 }

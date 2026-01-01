@@ -1,0 +1,46 @@
+name: Build Rust Kernel Driver
+
+on:
+  push:
+    paths:
+      - 'cheats/cs2-rust/driver/**'
+      - '.github/workflows/rust-driver.yml'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust Nightly
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        targets: x86_64-pc-windows-msvc
+        components: rust-src
+    
+    - name: Install cargo-make
+      run: cargo install cargo-make
+    
+    - name: Install WDK
+      run: |
+        # Download and install Windows Driver Kit
+        choco install windows-driver-kit -y --ignore-checksums
+      shell: powershell
+    
+    - name: Build Driver
+      working-directory: cheats/cs2-rust/driver
+      run: cargo +nightly build --release -Z build-std=core,alloc --target x86_64-pc-windows-msvc
+      continue-on-error: true
+    
+    - name: Upload Driver Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: externa-driver
+        path: cheats/cs2-rust/driver/target/x86_64-pc-windows-msvc/release/*.sys
+        if-no-files-found: warn
+

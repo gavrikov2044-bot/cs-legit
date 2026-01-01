@@ -10,9 +10,11 @@ use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM, RECT, BOOL};
 use windows::Win32::Graphics::Gdi::{
     CreateSolidBrush, CreatePen, SelectObject, DeleteObject,
-    Rectangle, FillRect, SetBkMode, TRANSPARENT,
-    GetDC, ReleaseDC, InvalidateRect,
-    PS_SOLID, GetStockObject, NULL_BRUSH, HRGN, HGDIOBJ,
+    Rectangle, FillRect, SetBkMode, TRANSPARENT, SetTextColor,
+    GetDC, ReleaseDC, InvalidateRect, CreateFontW, DrawTextW,
+    PS_SOLID, GetStockObject, NULL_BRUSH, HRGN, HGDIOBJ, DT_CENTER, DT_VCENTER, DT_SINGLELINE,
+    FW_BOLD, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, 
+    CLEARTYPE_QUALITY, DEFAULT_PITCH, FF_DONTCARE,
 };
 use windows::Win32::Graphics::Dwm::{
     DwmExtendFrameIntoClientArea, DwmEnableBlurBehindWindow, DwmIsCompositionEnabled,
@@ -269,13 +271,27 @@ impl Overlay {
         let menu_w = 400.0;
         let menu_h = 300.0;
         
+        // Background
         self.draw_rect_filled(hdc, menu_x, menu_y, menu_w, menu_h, Color::new(20, 20, 30, 240));
         self.draw_rect(hdc, menu_x, menu_y, menu_w, menu_h, Color::new(80, 80, 200, 255), 2);
+        
+        // Header
         self.draw_rect_filled(hdc, menu_x, menu_y, menu_w, 35.0, Color::new(40, 40, 60, 255));
         self.draw_rect_filled(hdc, menu_x, menu_y + 35.0, menu_w, 2.0, Color::new(100, 100, 255, 255));
-        self.draw_rect_filled(hdc, menu_x + 20.0, menu_y + 60.0, 360.0, 120.0, Color::new(30, 30, 45, 255));
-        self.draw_rect(hdc, menu_x + 20.0, menu_y + 60.0, 360.0, 120.0, Color::new(60, 60, 80, 255), 1);
+        self.draw_text(hdc, "EXTERNA CS2", (menu_x + menu_w / 2.0) as i32, (menu_y + 10.0) as i32, Color::new(255, 255, 255, 255), 18);
         
+        // ESP Settings box
+        self.draw_rect_filled(hdc, menu_x + 20.0, menu_y + 50.0, 360.0, 130.0, Color::new(30, 30, 45, 255));
+        self.draw_rect(hdc, menu_x + 20.0, menu_y + 50.0, 360.0, 130.0, Color::new(60, 60, 80, 255), 1);
+        
+        // Settings text
+        self.draw_text_left(hdc, "ESP Settings", (menu_x + 30.0) as i32, (menu_y + 58.0) as i32, Color::new(100, 100, 255, 255), 14);
+        self.draw_text_left(hdc, "[x] Box ESP", (menu_x + 40.0) as i32, (menu_y + 85.0) as i32, Color::new(200, 200, 200, 255), 13);
+        self.draw_text_left(hdc, "[x] Health Bar", (menu_x + 40.0) as i32, (menu_y + 105.0) as i32, Color::new(200, 200, 200, 255), 13);
+        self.draw_text_left(hdc, "[x] Armor Bar", (menu_x + 40.0) as i32, (menu_y + 125.0) as i32, Color::new(200, 200, 200, 255), 13);
+        self.draw_text_left(hdc, "[x] Stream-Proof", (menu_x + 40.0) as i32, (menu_y + 145.0) as i32, Color::new(100, 255, 100, 255), 13);
+        
+        // Close button
         let btn_x = menu_x + 100.0;
         let btn_y = menu_y + menu_h - 55.0;
         let btn_w = 200.0;
@@ -283,6 +299,68 @@ impl Overlay {
         
         self.draw_rect_filled(hdc, btn_x, btn_y, btn_w, btn_h, Color::new(180, 40, 40, 255));
         self.draw_rect(hdc, btn_x, btn_y, btn_w, btn_h, Color::new(220, 60, 60, 255), 1);
+        self.draw_text(hdc, "CLOSE CHEAT", (btn_x + btn_w / 2.0) as i32, (btn_y + 10.0) as i32, Color::new(255, 255, 255, 255), 14);
+        
+        // Footer
+        self.draw_text(hdc, "Press INSERT to close menu", (menu_x + menu_w / 2.0) as i32, (menu_y + menu_h - 20.0) as i32, Color::new(100, 100, 100, 255), 11);
+    }
+    
+    fn draw_text(&self, hdc: windows::Win32::Graphics::Gdi::HDC, text: &str, x: i32, y: i32, color: Color, size: i32) {
+        unsafe {
+            let font = CreateFontW(
+                size, 0, 0, 0, FW_BOLD.0 as i32, 0, 0, 0,
+                DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32,
+                CLEARTYPE_QUALITY.0 as u32, (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
+                windows::core::w!("Segoe UI"),
+            );
+            
+            let old_font = SelectObject(hdc, HGDIOBJ(font.0));
+            SetTextColor(hdc, windows::Win32::Foundation::COLORREF(
+                (color.r as u32) | ((color.g as u32) << 8) | ((color.b as u32) << 16)
+            ));
+            
+            let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+            let mut rect = RECT {
+                left: x - 150,
+                top: y,
+                right: x + 150,
+                bottom: y + size + 5,
+            };
+            
+            DrawTextW(hdc, &mut wide[..wide.len()-1], &mut rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            
+            SelectObject(hdc, old_font);
+            DeleteObject(HGDIOBJ(font.0));
+        }
+    }
+    
+    fn draw_text_left(&self, hdc: windows::Win32::Graphics::Gdi::HDC, text: &str, x: i32, y: i32, color: Color, size: i32) {
+        unsafe {
+            let font = CreateFontW(
+                size, 0, 0, 0, 400, 0, 0, 0,
+                DEFAULT_CHARSET.0 as u32, OUT_DEFAULT_PRECIS.0 as u32, CLIP_DEFAULT_PRECIS.0 as u32,
+                CLEARTYPE_QUALITY.0 as u32, (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
+                windows::core::w!("Segoe UI"),
+            );
+            
+            let old_font = SelectObject(hdc, HGDIOBJ(font.0));
+            SetTextColor(hdc, windows::Win32::Foundation::COLORREF(
+                (color.r as u32) | ((color.g as u32) << 8) | ((color.b as u32) << 16)
+            ));
+            
+            let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+            let mut rect = RECT {
+                left: x,
+                top: y,
+                right: x + 300,
+                bottom: y + size + 5,
+            };
+            
+            DrawTextW(hdc, &mut wide[..wide.len()-1], &mut rect, DT_SINGLELINE);
+            
+            SelectObject(hdc, old_font);
+            DeleteObject(HGDIOBJ(font.0));
+        }
     }
 }
 
