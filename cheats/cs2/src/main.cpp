@@ -408,7 +408,9 @@ void render() {
                        
         if (distSq > 400.0f) smoothPos = ent.origin;
         else {
-            float speed = 25.0f * dt;
+            // Increased interpolation speed to fix "floating" ESP lag
+            // 45.0f is snappier than 25.0f but still smooth
+            float speed = 45.0f * dt;
             smoothPos.x = Lerp(smoothPos.x, ent.origin.x, speed);
             smoothPos.y = Lerp(smoothPos.y, ent.origin.y, speed);
             smoothPos.z = Lerp(smoothPos.z, ent.origin.z, speed);
