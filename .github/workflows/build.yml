@@ -1,0 +1,37 @@
+name: Build Platform
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-cheats:
+    name: Build CS2 External
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v1.1
+      
+    - name: Setup CMake
+      uses: jwlawles/cmake-build-command@v1
+      with:
+        cmake-version: 'latest'
+        
+    - name: Configure CMake
+      run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+      
+    - name: Build
+      run: cmake --build build --config Release --parallel
+      
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Externa_CS2
+        path: build/cheats/cs2/Release/*.exe
+        if-no-files-found: ignore

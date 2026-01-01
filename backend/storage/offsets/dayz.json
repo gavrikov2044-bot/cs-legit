@@ -1,0 +1,26 @@
+{
+  "game": "dayz",
+  "version": "2025-12-23",
+  "note": "DayZ offsets need to be updated for each game version",
+  "world": {
+    "offset": "0x4428848",
+    "camera": "0x8",
+    "inventory": "0x28"
+  },
+  "entity": {
+    "network_id": "0x08",
+    "type_info": "0x90",
+    "visual_state": "0x198",
+    "position": "0x2C"
+  },
+  "player": {
+    "name": "0xA4",
+    "health": "0x108",
+    "blood": "0x124",
+    "shock": "0x128"
+  },
+  "camera": {
+    "view_matrix": "0x168"
+  }
+}
+

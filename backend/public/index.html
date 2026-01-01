@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Single-Project</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            min-height: 100vh;
+            font-family: 'Rajdhani', sans-serif;
+            background: #0a0a0f;
+            color: #fff;
+            overflow-x: hidden;
+        }
+
+        /* Animated background */
+        .bg-animation {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background: 
+                radial-gradient(ellipse at 20% 80%, rgba(120, 0, 255, 0.15) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 20%, rgba(255, 0, 100, 0.1) 0%, transparent 50%),
+                radial-gradient(ellipse at 50% 50%, rgba(0, 200, 255, 0.05) 0%, transparent 70%),
+                linear-gradient(180deg, #0a0a0f 0%, #12121a 100%);
+        }
+
+        /* Floating particles */
+        .particles {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            overflow: hidden;
+        }
+
+        .particle {
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            background: rgba(138, 43, 226, 0.6);
+            border-radius: 50%;
+            animation: float 15s infinite;
+            box-shadow: 0 0 10px rgba(138, 43, 226, 0.5);
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(100vh) rotate(0deg); opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { transform: translateY(-10vh) rotate(720deg); opacity: 0; }
+        }
+
+        /* Grid overlay */
+        .grid-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background-image: 
+                linear-gradient(rgba(138, 43, 226, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(138, 43, 226, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            animation: gridMove 20s linear infinite;
+        }
+
+        @keyframes gridMove {
+            0% { transform: perspective(500px) rotateX(60deg) translateY(0); }
+            100% { transform: perspective(500px) rotateX(60deg) translateY(50px); }
+        }
+
+        /* Main container */
+        .container {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+            text-align: center;
+        }
+
+        /* Logo */
+        .logo {
+            font-family: 'Orbitron', monospace;
+            font-size: clamp(2.5rem, 8vw, 5rem);
+            font-weight: 900;
+            background: linear-gradient(135deg, #8a2be2, #ff006a, #00d4ff);
+            background-size: 200% 200%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: gradientShift 3s ease infinite;
+            margin-bottom: 10px;
+            text-shadow: 0 0 60px rgba(138, 43, 226, 0.5);
+            letter-spacing: 3px;
+        }
+
+        @keyframes gradientShift {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+        }
+
+        .tagline {
+            font-size: 1.2rem;
+            color: rgba(255, 255, 255, 0.5);
+            letter-spacing: 8px;
+            text-transform: uppercase;
+            margin-bottom: 60px;
+        }
+
+        /* Feature cards */
+        .features {
+            display: flex;
+            gap: 30px;
+            margin-bottom: 60px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .feature {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(138, 43, 226, 0.2);
+            border-radius: 16px;
+            padding: 30px;
+            width: 180px;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+
+        .feature:hover {
+            transform: translateY(-5px);
+            border-color: rgba(138, 43, 226, 0.5);
+            box-shadow: 0 20px 40px rgba(138, 43, 226, 0.2);
+        }
+
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 15px;
+        }
+
+        .feature-title {
+            font-family: 'Orbitron', monospace;
+            font-size: 1rem;
+            font-weight: 700;
+            color: #8a2be2;
+            margin-bottom: 8px;
+        }
+
+        .feature-desc {
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        /* Download button */
+        .download-btn {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 15px;
+            padding: 20px 50px;
+            font-family: 'Orbitron', monospace;
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #fff;
+            background: linear-gradient(135deg, #8a2be2, #6a1bb2);
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            text-decoration: none;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            box-shadow: 
+                0 10px 40px rgba(138, 43, 226, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2);
+        }
+
+        .download-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: 0.5s;
+        }
+
+        .download-btn:hover::before {
+            left: 100%;
+        }
+
+        .download-btn:hover {
+            transform: translateY(-3px) scale(1.02);
+            box-shadow: 
+                0 15px 50px rgba(138, 43, 226, 0.5),
+                inset 0 1px 0 rgba(255, 255, 255, 0.3);
+        }
+
+        .download-btn:active {
+            transform: translateY(0) scale(0.98);
+        }
+
+        .download-icon {
+            font-size: 1.5rem;
+        }
+
+        /* Version badge */
+        .version {
+            margin-top: 20px;
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.3);
+        }
+
+        .version span {
+            color: #8a2be2;
+            font-weight: 600;
+        }
+
+        /* Footer */
+        .footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 20px;
+            text-align: center;
+            font-size: 0.8rem;
+            color: rgba(255, 255, 255, 0.3);
+            background: linear-gradient(transparent, rgba(0, 0, 0, 0.5));
+        }
+
+        /* Glow effect */
+        .glow {
+            position: absolute;
+            width: 300px;
+            height: 300px;
+            background: radial-gradient(circle, rgba(138, 43, 226, 0.3), transparent 70%);
+            border-radius: 50%;
+            filter: blur(40px);
+            animation: pulse 4s ease-in-out infinite;
+            z-index: -1;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 0.5; }
+            50% { transform: scale(1.2); opacity: 0.8; }
+        }
+
+        /* Status indicator */
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 30px;
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #00ff88;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #00ff88;
+            animation: blink 2s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .features {
+                flex-direction: column;
+                align-items: center;
+            }
+            .feature {
+                width: 100%;
+                max-width: 280px;
+            }
+            .download-btn {
+                padding: 18px 40px;
+                font-size: 1.1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-animation"></div>
+    <div class="grid-overlay"></div>
+    <div class="particles" id="particles"></div>
+
+    <div class="container">
+        <div class="glow"></div>
+        
+        <h1 class="logo">SINGLE-PROJECT</h1>
+        <p class="tagline">Game Enhancement Suite</p>
+
+        <div class="features">
+            <div class="feature">
+                <div class="feature-icon">🎯</div>
+                <div class="feature-title">ESP</div>
+                <div class="feature-desc">Visual player detection</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🔒</div>
+                <div class="feature-title">SECURE</div>
+                <div class="feature-desc">Protected execution</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">⚡</div>
+                <div class="feature-title">FAST</div>
+                <div class="feature-desc">Optimized performance</div>
+            </div>
+        </div>
+
+        <a href="/api/download/launcher" class="download-btn">
+            <span class="download-icon">⬇️</span>
+            <span>DOWNLOAD LAUNCHER</span>
+        </a>
+
+        <p class="version">Version <span>1.0.0</span> • Windows x64</p>
+
+        <div class="status" id="status">
+            <div class="status-dot" id="status-dot"></div>
+            <span id="status-text">Checking status...</span>
+        </div>
+
+        <div class="game-status" id="game-status"></div>
+    </div>
+
+    <div class="footer">
+        © 2025 Single-Project. All rights reserved.
+    </div>
+
+    <style>
+        .game-status {
+            margin-top: 30px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .game-card {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(138,43,226,0.2);
+            border-radius: 12px;
+            padding: 15px 25px;
+            min-width: 150px;
+            text-align: center;
+        }
+        .game-card.operational { border-color: rgba(0,255,136,0.4); }
+        .game-card.warning { border-color: rgba(255,200,0,0.4); }
+        .game-card.maintenance { border-color: rgba(255,60,60,0.4); }
+        .game-card.updating { border-color: rgba(255,165,0,0.4); }
+        .game-card.coming-soon { border-color: rgba(100,100,100,0.4); opacity: 0.6; }
+        .game-stat.updating { background: rgba(255,165,0,0.2); color: #ffa500; }
+        .game-stat.coming { background: rgba(100,100,100,0.2); color: #888; }
+        .game-name {
+            font-family: 'Orbitron', monospace;
+            font-weight: 700;
+            margin-bottom: 5px;
+        }
+        .game-ver {
+            font-size: 0.8rem;
+            color: rgba(255,255,255,0.4);
+            margin-bottom: 8px;
+        }
+        .game-stat {
+            font-size: 0.75rem;
+            padding: 4px 10px;
+            border-radius: 20px;
+            display: inline-block;
+        }
+        .game-stat.operational { background: rgba(0,255,136,0.2); color: #00ff88; }
+        .game-stat.warning { background: rgba(255,200,0,0.2); color: #ffc800; }
+        .game-stat.maintenance { background: rgba(255,60,60,0.2); color: #ff3c3c; }
+        .last-update {
+            font-size: 0.7rem;
+            color: rgba(255,255,255,0.3);
+            margin-top: 8px;
+        }
+        
+        /* Mobile Responsive Design */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+            
+            .hero h2 {
+                font-size: 1.2rem;
+            }
+            
+            .hero p {
+                font-size: 1rem;
+                max-width: 90%;
+            }
+            
+            .cta-button {
+                font-size: 1rem;
+                padding: 12px 28px;
+            }
+            
+            .game-status {
+                gap: 15px;
+            }
+            
+            .game-card {
+                min-width: 140px;
+                padding: 12px 20px;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .hero h1 {
+                font-size: 2rem;
+            }
+            
+            .hero h2 {
+                font-size: 1rem;
+            }
+            
+            .hero p {
+                font-size: 0.9rem;
+            }
+            
+            .cta-button {
+                font-size: 0.9rem;
+                padding: 10px 24px;
+            }
+            
+            .status-indicator {
+                font-size: 0.8rem;
+            }
+            
+            .game-status {
+                flex-direction: column;
+                gap: 10px;
+                padding: 0 20px;
+            }
+            
+            .game-card {
+                width: 100%;
+                min-width: unset;
+            }
+        }
+    </style>
+
+    <script>
+        // Create floating particles
+        const particlesContainer = document.getElementById('particles');
+        for (let i = 0; i < 30; i++) {
+            const particle = document.createElement('div');
+            particle.className = 'particle';
+            particle.style.left = Math.random() * 100 + '%';
+            particle.style.animationDelay = Math.random() * 15 + 's';
+            particle.style.animationDuration = (10 + Math.random() * 10) + 's';
+            particle.style.width = (2 + Math.random() * 4) + 'px';
+            particle.style.height = particle.style.width;
+            particlesContainer.appendChild(particle);
+        }
+
+        // Fetch status
+        async function fetchStatus() {
+            try {
+                const res = await fetch('/api/games/status');
+                const data = await res.json();
+                
+                // Update overall status
+                const dot = document.getElementById('status-dot');
+                const text = document.getElementById('status-text');
+                
+                dot.style.background = data.overall === 'operational' ? '#00ff88' : 
+                                       data.overall === 'warning' ? '#ffc800' : '#ff3c3c';
+                dot.style.boxShadow = `0 0 10px ${dot.style.background}`;
+                text.textContent = data.overall_message;
+                
+                // Update game cards
+                const container = document.getElementById('game-status');
+                container.innerHTML = '';
+                
+                for (const [id, game] of Object.entries(data.games)) {
+                    const card = document.createElement('div');
+                    card.className = `game-card ${game.status}`;
+                    
+                    const lastUpdate = game.last_update ? 
+                        new Date(game.last_update).toLocaleDateString() : 'N/A';
+                    
+                    card.innerHTML = `
+                        <div class="game-name">${game.name}</div>
+                        <div class="game-ver">v${game.version}</div>
+                        <span class="game-stat ${game.status}">${game.status.toUpperCase()}</span>
+                        <div class="last-update">Updated: ${lastUpdate}</div>
+                    `;
+                    container.appendChild(card);
+                }
+            } catch (e) {
+                document.getElementById('status-text').textContent = 'Status unavailable';
+            }
+        }
+        
+        // Fetch on load and every 3 seconds for near-instant updates
+        // Initial fetch
+        fetchStatus();
+        
+        // Fallback polling every 3 seconds
+        setInterval(fetchStatus, 3000);
+        
+        // WebSocket for real-time updates
+        let ws;
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                console.log('[WebSocket] Connected');
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('[WebSocket] Message:', data);
+                    
+                    if (data.type === 'status_update' || data.type === 'version_update') {
+                        // Instant update on status/version change
+                        fetchStatus();
+                    }
+                } catch (e) {
+                    console.error('[WebSocket] Parse error:', e);
+                }
+            };
+            
+            ws.onerror = (error) => {
+                console.error('[WebSocket] Error:', error);
+            };
+            
+            ws.onclose = () => {
+                console.log('[WebSocket] Disconnected, reconnecting...');
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
+        
+        connectWebSocket();
+    </script>
+</body>
+</html>
+
