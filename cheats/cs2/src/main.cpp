@@ -255,6 +255,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         break;
         
+    case WM_DISPLAYCHANGE:
+    case WM_SIZE:
+        // Update screen size
+        {
+            int w = LOWORD(lParam);
+            int h = HIWORD(lParam);
+            if (w > 0 && h > 0) {
+                g_gameBounds = {0, 0, w, h};
+                // Resize buffers if needed (advanced), for now just bounds
+            }
+        }
+        break;
+
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
@@ -320,6 +333,9 @@ bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
             WS_POPUP, 0, 0, w, h,
             0, 0, hInstance, 0);
     }
+
+    // Assign global bounds to fix W2S
+    g_gameBounds = {0, 0, w, h};
 
     if (!g_hwnd) {
         Log("[!] CreateWindow failed: " + std::to_string(GetLastError()));
@@ -533,8 +549,8 @@ void render() {
         
         // --- SMOOTHING LOGIC ---
         // Interpolate position to remove jitter
-        // Since we copied the cache, we need to maintain state locally for smoothing
-        static std::map<int, Vector3<float>> s_smoothPos;
+        // Use array instead of map for O(1) access
+        static std::array<Vector3<float>, 65> s_smoothPos{};
         Vector3<float>& smoothPos = s_smoothPos[i];
         
         if (smoothPos.x == 0 && smoothPos.y == 0) smoothPos = ent.origin;
