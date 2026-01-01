@@ -557,14 +557,34 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         if (esp_menu::g_menuOpen != lastMenuState) {
             lastMenuState = esp_menu::g_menuOpen;
             LONG_PTR exStyle = GetWindowLongPtr(g_ctx.overlayHwnd, GWL_EXSTYLE);
+            
             if (esp_menu::g_menuOpen) {
-                exStyle &= ~WS_EX_TRANSPARENT; exStyle &= ~WS_EX_LAYERED;
+                // OPEN: Interactive Menu
+                exStyle &= ~WS_EX_TRANSPARENT; 
+                exStyle &= ~WS_EX_LAYERED;
+                exStyle &= ~WS_EX_NOACTIVATE; // Allow focus
+                
                 SetWindowLongPtr(g_ctx.overlayHwnd, GWL_EXSTYLE, exStyle);
+                
+                // Focus Overlay
                 SetForegroundWindow(g_ctx.overlayHwnd);
+                SetFocus(g_ctx.overlayHwnd);
+                
             } else {
-                exStyle |= WS_EX_TRANSPARENT; exStyle |= WS_EX_LAYERED;
+                // CLOSED: Game Mode
+                exStyle |= WS_EX_TRANSPARENT; 
+                exStyle |= WS_EX_LAYERED;
+                exStyle |= WS_EX_NOACTIVATE; // Prevent focus stealing
+                
                 SetWindowLongPtr(g_ctx.overlayHwnd, GWL_EXSTYLE, exStyle);
                 SetLayeredWindowAttributes(g_ctx.overlayHwnd, 0, 255, LWA_ALPHA);
+                
+                // CRITICAL: Return focus to Game immediately!
+                if (g_ctx.gameHwnd) {
+                    SetForegroundWindow(g_ctx.gameHwnd);
+                    SetActiveWindow(g_ctx.gameHwnd);
+                    SetFocus(g_ctx.gameHwnd);
+                }
             }
         }
         
