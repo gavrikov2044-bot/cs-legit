@@ -106,29 +106,31 @@ extern "C" NTSTATUS DirectSyscall(
 );
 
 DWORD GetNtReadVirtualMemorySyscall() {
-    // Dynamic SSN retrieval (Simple approach)
-    // In real prod code, we'd use Halos Gate or similar.
-    // Windows 10/11 common offsets:
-    // 10 22H2: 0x3F
-    // 11 21H2: 0x3F
-    // 11 22H2: 0x3F
-    // 11 23H2: 0x3F
-    // It's quite stable recently.
-    // Better way: Parse ntdll.dll export.
-    
     HMODULE hNtdll = GetModuleHandleA("ntdll.dll");
-    if (!hNtdll) return 0x3F; // Fallback
+    if (!hNtdll) return 0; // Invalid
     
     FARPROC func = GetProcAddress(hNtdll, "NtReadVirtualMemory");
-    if (!func) return 0x3F;
+    if (!func) return 0;
     
     BYTE* p = (BYTE*)func;
-    // Check for "mov eax, SSN" pattern (B8 XX XX XX XX)
-    if (p[0] == 0x4C && p[1] == 0x8B && p[2] == 0xD1 && p[3] == 0xB8) {
-         return *(DWORD*)(p + 4);
+    
+    // Improved SSN Scanner (Halo's Gate style)
+    // We look for 'mov eax, SSN' (B8 XX XX XX XX)
+    // But sometimes functions are hooked (jmp). We need to handle that.
+    
+    for (int i = 0; i < 32; i++) {
+        // Check for 'mov eax, imm32'
+        if (p[i] == 0xB8) {
+            return *(DWORD*)(p + i + 1);
+        }
+        
+        // Check for 'ret' (C3) - stop if function ends
+        if (p[i] == 0xC3) break;
     }
     
-    return 0x3F; // Default fallback
+    // Fallback: If local hook is present, check neighbor functions? 
+    // For now, let's just return 0 to indicate failure and fallback to WinAPI safely.
+    return 0; 
 }
 
 DWORD g_syscallSSN = 0;
@@ -145,10 +147,10 @@ public:
     bool attach() {
         // Init SSN
         g_syscallSSN = GetNtReadVirtualMemorySyscall();
-        if (g_syscallSSN != 0x3F) {
+        if (g_syscallSSN != 0) {
             Log("[+] Stealth Mode: Dynamic SSN Found (" + std::to_string(g_syscallSSN) + ")");
         } else {
-            Log("[!] Stealth Mode: SSN Lookup Failed/Default. Using 0x3F.");
+            Log("[!] Stealth Mode: SSN Lookup Failed. Using WinAPI.");
         }
         
         HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -210,13 +212,15 @@ public:
             SIZE_T bytesRead = 0;
             NTSTATUS status = DirectSyscall(g_syscallSSN, handle, (PVOID)addr, buf, size, &bytesRead);
             if (status != 0) {
-                // Log once per session to avoid spam
+                // Log once and DISABLE syscalls to fallback immediately
                 static bool logged = false;
                 if (!logged) {
-                    Log("[!] Syscall Read Failed: Status " + std::to_string(status));
+                    Log("[!] Syscall Read Failed: Status " + std::to_string(status) + ". Reverting to WinAPI.");
                     logged = true;
                 }
-                return false;
+                g_syscallSSN = 0; // Force fallback for next calls
+                // Try WinAPI immediately this time
+                return ReadProcessMemory(handle, (LPCVOID)addr, buf, size, nullptr);
             }
             return true; 
         }
@@ -238,12 +242,20 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return true;
 
     switch (msg) {
+    case WM_NCHITTEST:
+        // CRITICAL FIX: Allow clicks to pass through when menu is closed
+        // This works even without WS_EX_LAYERED
+        if (!esp_menu::g_menuOpen) {
+            return HTTRANSPARENT;
+        }
+        break;
+        
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
     }
     return DefWindowProc(hWnd, msg, wParam, lParam);
-    }
+}
 
 // ============================================
 // Create Overlay (UIAccess + DComp)
@@ -288,9 +300,9 @@ bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
     // Create Window
     if (isUIAccess) {
         Log("[*] Creating UIAccess Window (Band)...");
-        // Removed WS_EX_LAYERED to rely on DwmExtendFrameIntoClientArea for transparency
+        // WS_EX_NOACTIVATE prevents focus stealing
         g_hwnd = uiaccess::CreateUIAccessWindow(
-            WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW,
+            WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             wc.lpszClassName, L"Externa Overlay",
             WS_POPUP, 0, 0, w, h,
             nullptr, nullptr, hInstance, nullptr
@@ -298,7 +310,7 @@ bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
     } else {
         Log("[*] Creating Standard Window...");
         g_hwnd = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW, // Removed WS_EX_LAYERED
+            WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, 
             wc.lpszClassName, L"Externa Overlay",
             WS_POPUP, 0, 0, w, h,
             0, 0, hInstance, 0);
