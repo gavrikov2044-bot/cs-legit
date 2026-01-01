@@ -22,63 +22,29 @@ jobs:
       with:
         targets: x86_64-pc-windows-msvc
         components: rust-src
-    
-    - name: Install WDK via winget
+
+    - name: Note about WDK
       run: |
-        # Try winget first
-        winget install Microsoft.WindowsWDK --accept-source-agreements --accept-package-agreements || true
+        Write-Host "============================================"
+        Write-Host "KERNEL DRIVER BUILD"
+        Write-Host "============================================"
+        Write-Host ""
+        Write-Host "Kernel driver requires Windows Driver Kit (WDK)"
+        Write-Host "which cannot be easily installed in GitHub Actions."
+        Write-Host ""
+        Write-Host "To build the driver locally:"
+        Write-Host "1. Install Visual Studio 2022"
+        Write-Host "2. Install Windows SDK"
+        Write-Host "3. Install Windows Driver Kit (WDK)"
+        Write-Host "4. Run: cargo +nightly build --release"
+        Write-Host ""
+        Write-Host "Uploading source code as artifact..."
+        Write-Host "============================================"
       shell: powershell
-      continue-on-error: true
-    
-    - name: Download WDK Installer
-      run: |
-        # Download WDK 10 installer
-        $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2249371"
-        $installerPath = "$env:TEMP\wdksetup.exe"
-        Write-Host "Downloading WDK..."
-        Invoke-WebRequest -Uri $wdkUrl -OutFile $installerPath -UseBasicParsing
-        Write-Host "Installing WDK (this may take a while)..."
-        Start-Process -FilePath $installerPath -ArgumentList "/quiet", "/norestart" -Wait
-        Write-Host "WDK installation completed"
-      shell: powershell
-      continue-on-error: true
-    
-    - name: Setup WDK Environment
-      run: |
-        # Find WDK installation
-        $wdkPath = "C:\Program Files (x86)\Windows Kits\10"
-        if (Test-Path $wdkPath) {
-          Write-Host "WDK found at: $wdkPath"
-          $env:WDK_ROOT = $wdkPath
-          echo "WDK_ROOT=$wdkPath" >> $env:GITHUB_ENV
-        } else {
-          Write-Host "WDK not found, build may fail"
-        }
-      shell: powershell
-    
-    - name: Build Driver
-      working-directory: cheats/cs2-rust/driver
-      run: |
-        cargo +nightly build --release -Z build-std=core,alloc --target x86_64-pc-windows-msvc
-      continue-on-error: true
-    
-    - name: Check Build Output
-      run: |
-        if (Test-Path "cheats/cs2-rust/driver/target/x86_64-pc-windows-msvc/release/*.sys") {
-          Write-Host "Driver built successfully!"
-        } else {
-          Write-Host "Driver build failed or produced no .sys file"
-          # List what was built
-          Get-ChildItem -Recurse cheats/cs2-rust/driver/target -ErrorAction SilentlyContinue | Select-Object FullName
-        }
-      shell: powershell
-    
-    - name: Upload Driver Artifact
+
+    - name: Upload Driver Source
       uses: actions/upload-artifact@v4
       with:
-        name: externa-driver
-        path: |
-          cheats/cs2-rust/driver/target/x86_64-pc-windows-msvc/release/*.sys
-          cheats/cs2-rust/driver/target/x86_64-pc-windows-msvc/release/*.dll
-          cheats/cs2-rust/driver/src/
-        if-no-files-found: warn
+        name: externa-driver-source
+        path: cheats/cs2-rust/driver/
+        if-no-files-found: error
