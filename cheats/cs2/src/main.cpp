@@ -320,13 +320,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 // ============================================
 void MemoryThreadLogic() {
     using namespace omath;
-    Log("[*] Memory Thread Started");
+    Log("[*] Memory Thread Started (8ms tick)"); // LOG CHANGED
     
     while (g_running) {
         if (!g_ctx.ok()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(500)); // Relaxed check
             continue;
         }
+
+        // ... reading logic ... (keep same)
 
         // Read Matrix
         auto vm = g_ctx.read<decltype(g_ctx.viewMatrix)>(g_ctx.clientBase + offsets::dwViewMatrix);
@@ -354,21 +356,8 @@ void MemoryThreadLogic() {
             g_ctx.viewMatrix = vm;
             
             if (entityList) {
-                // BULK READ OPTIMIZATION: Read all list entries in one go
-                // This is 64x faster than reading one by one
-                struct ListEntry { uintptr_t ptr; char pad[8]; }; // Entries are 16 bytes apart usually? No, it's ptr then padding or next ptr.
-                // Actually CS2 list is: ptr (8) + padding/other (8) = 16 bytes stride?
-                // Formula was: list + 8 * ((i & 0x7FFF) >> 9) + 16
-                // The list is chunked. We can't easily bulk read chunks without logic.
-                
-                // Let's stick to loop but optimize logic inside.
-                // Or better: Read local player team once.
-                
                 for (int i = 1; i <= 64; i++) {
                     auto& ent = g_ctx.entityCache[i];
-                    
-                    // We only clear valid if we fail to read critical data
-                    // Don't flicker "valid" false/true every frame to prevent interpolation reset
                     
                     uintptr_t listEntry = g_ctx.read<uintptr_t>(entityList + (8 * (i & 0x7FFF) >> 9) + 16);
                     if (!listEntry) { ent.valid = false; continue; }
@@ -384,14 +373,12 @@ void MemoryThreadLogic() {
                     
                     if (!pawn || pawn == localPawn) { ent.valid = false; continue; }
                     
-                    // Fast Read: Health & Team
                     int health = g_ctx.read<int>(pawn + offsets::m_iHealth);
                     if (health <= 0 || health > 100) { ent.valid = false; continue; }
 
                     int team = g_ctx.read<int>(pawn + offsets::m_iTeamNum);
                     if (team == localTeam) { ent.valid = false; continue; }
 
-                    // Only now read position (heavy read)
                     uintptr_t node = g_ctx.read<uintptr_t>(pawn + offsets::m_pGameSceneNode);
                     
                     ent.origin = g_ctx.read<Vector3<float>>(node + offsets::m_vecAbsOrigin);
@@ -402,7 +389,9 @@ void MemoryThreadLogic() {
             }
         }
         
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        // OPTIMIZATION: Increased sleep to 8ms (~120 updates/sec)
+        // 1ms was killing CPU on laptops causing DWM lag.
+        std::this_thread::sleep_for(std::chrono::milliseconds(8));
     }
 }
 
@@ -648,29 +637,31 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         bool isOverlayActive = (fg == g_ctx.overlayHwnd);
         
         static bool wasActive = true;
+        
+        // DEBOUNCE: Don't panic on micro-focus loss (e.g. during alt-tab transition)
+        static int focusLossCounter = 0;
+        
         if (!isGameActive && !isOverlayActive && !esp_menu::g_menuOpen) {
-            if (wasActive) {
-                Log("[-] Focus lost (Alt-Tab). Pausing ESP...");
-                wasActive = false;
+            focusLossCounter++;
+            if (focusLossCounter > 60) { // Wait ~1 sec (60 frames) before sleeping
+                if (wasActive) {
+                    // Log("[-] Focus lost. Pausing..."); // Spam removed
+                    wasActive = false;
+                }
+                
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                
+                // Just clear and present once, then wait
+                float clear[4] = {0,0,0,0};
+                g_ctx.ctx->OMSetRenderTargets(1, &g_ctx.renderTarget, nullptr);
+                g_ctx.ctx->ClearRenderTargetView(g_ctx.renderTarget, clear);
+                g_ctx.swapChain->Present(1, 0);
+                continue;
             }
-            
-            // We are alt-tabbed (e.g. Browser)
-            // Sleep to save resources and hide overlay logic (via clear)
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            
-            // Clear screen transparently
-            ImGui_ImplDX11_NewFrame();
-            ImGui_ImplWin32_NewFrame();
-            ImGui::NewFrame();
-            ImGui::Render();
-            float clear[4] = {0,0,0,0};
-            g_ctx.ctx->OMSetRenderTargets(1, &g_ctx.renderTarget, nullptr);
-            g_ctx.ctx->ClearRenderTargetView(g_ctx.renderTarget, clear);
-            g_ctx.swapChain->Present(1, 0);
-            continue;
         } else {
+            focusLossCounter = 0;
             if (!wasActive) {
-                Log("[+] Focus regained. Resuming ESP...");
+                // Log("[+] Focus regained."); // Spam removed
                 wasActive = true;
             }
         }
