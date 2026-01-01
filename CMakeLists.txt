@@ -1,9 +1,6 @@
-cmake_minimum_required(VERSION 3.10)
-project(CS2_Cheat_Suite)
+cmake_minimum_required(VERSION 3.20)
+project(ExternaPlatform)
 
-# Add all subprojects
-add_subdirectory(externa)
-add_subdirectory(interna)
-add_subdirectory(injector)
-add_subdirectory(launcher)
-
+# Add subdirectories for the new structure
+add_subdirectory(cheats/cs2)
+add_subdirectory(launcher/app)
