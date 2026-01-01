@@ -12,7 +12,7 @@ use windows::Win32::Graphics::Gdi::{
     CreateSolidBrush, CreatePen, SelectObject, DeleteObject,
     Rectangle, FillRect, SetBkMode, TRANSPARENT,
     GetDC, ReleaseDC, InvalidateRect,
-    PS_SOLID, GetStockObject, NULL_BRUSH, HRGN,
+    PS_SOLID, GetStockObject, NULL_BRUSH, HRGN, HGDIOBJ,
 };
 use windows::Win32::Graphics::Dwm::{
     DwmExtendFrameIntoClientArea, DwmEnableBlurBehindWindow, DwmIsCompositionEnabled,
@@ -21,21 +21,20 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, RegisterClassExW, DefWindowProcW, PostQuitMessage,
-    ShowWindow, GetMessageW, TranslateMessage, DispatchMessageW,
-    GetAsyncKeyState, GetSystemMetrics, GetWindowLongPtrW, SetWindowLongPtrW,
+    ShowWindow, TranslateMessage, DispatchMessageW,
+    GetSystemMetrics, GetWindowLongPtrW, SetWindowLongPtrW,
     SetForegroundWindow, PeekMessageW, SetWindowPos, SetWindowDisplayAffinity,
     WNDCLASSEXW, MSG, 
     WS_POPUP, WS_VISIBLE, WS_CLIPSIBLINGS,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE, WS_EX_LAYERED,
+    WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE, WS_EX_LAYERED,
     WM_DESTROY, WM_NCHITTEST, WM_ERASEBKGND,
     SW_SHOWNOACTIVATE, HTTRANSPARENT, SM_CXSCREEN, SM_CYSCREEN,
-    GWL_EXSTYLE, GWL_STYLE, PM_REMOVE, HWND_TOPMOST,
+    GWL_EXSTYLE, PM_REMOVE, HWND_TOPMOST,
     SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE,
     CS_HREDRAW, CS_VREDRAW,
-    // Stream-Proof flags (from Valthrun)
     WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::VK_INSERT;
+use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 
 use crate::{SharedState, RUNNING};
 use crate::esp::{generate_esp_commands, DrawCommand, Color};
@@ -58,12 +57,10 @@ impl Overlay {
         let width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
         let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
         
-        // Store state for WndProc
         unsafe {
             OVERLAY_STATE = Some(Arc::as_ptr(&state));
         }
         
-        // Register window class
         let class_name = w!("ExternaOverlayRust");
         
         let wc = WNDCLASSEXW {
@@ -77,7 +74,6 @@ impl Overlay {
         
         unsafe { RegisterClassExW(&wc) };
         
-        // Create window with Valthrun-style flags
         let hwnd = unsafe {
             CreateWindowExW(
                 WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
@@ -93,19 +89,16 @@ impl Overlay {
         };
         
         unsafe {
-            // Check DWM composition
             if !DwmIsCompositionEnabled()?.as_bool() {
                 log::error!("DWM Composition is disabled!");
             }
             
-            // Enable blur behind (Valthrun technique)
             let mut bb = DWM_BLURBEHIND::default();
             bb.dwFlags = DWM_BB_ENABLE;
             bb.fEnable = BOOL::from(true);
             bb.hRgnBlur = HRGN::default();
             let _ = DwmEnableBlurBehindWindow(hwnd, &bb);
             
-            // Extend frame into client area
             let _ = DwmExtendFrameIntoClientArea(hwnd, &MARGINS {
                 cxLeftWidth: -1,
                 cxRightWidth: -1,
@@ -113,8 +106,7 @@ impl Overlay {
                 cyBottomHeight: -1,
             });
             
-            // Make window topmost
-            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)?;
+            let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
         
         Ok(Self { 
@@ -127,7 +119,6 @@ impl Overlay {
     }
     
     /// Toggle Stream-Proof mode (hide from screen capture)
-    /// From Valthrun: SetWindowDisplayAffinity
     pub fn set_stream_proof(&mut self, enabled: bool) {
         unsafe {
             let affinity = if enabled { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE };
@@ -142,16 +133,13 @@ impl Overlay {
     
     /// Run main loop
     pub fn run(&mut self) -> Result<()> {
-        // Enable Stream-Proof by default
         self.set_stream_proof(true);
         
-        // Show window
         unsafe { ShowWindow(self.hwnd, SW_SHOWNOACTIVATE) };
         
         let mut msg = MSG::default();
         
         loop {
-            // Process messages (non-blocking)
             while unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
                 if msg.message == windows::Win32::UI::WindowsAndMessaging::WM_QUIT {
                     RUNNING.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -163,17 +151,15 @@ impl Overlay {
                 }
             }
             
-            // Check if should exit
             if !RUNNING.load(std::sync::atomic::Ordering::Relaxed) {
                 break;
             }
             
-            // Handle input
-            if unsafe { GetAsyncKeyState(VK_INSERT.0 as i32) } & 1 != 0 {
+            // INSERT key toggle
+            if unsafe { GetAsyncKeyState(0x2D) } & 1 != 0 {  // VK_INSERT = 0x2D
                 let mut settings = self.state.settings.write();
                 settings.menu_open = !settings.menu_open;
                 
-                // Toggle click-through
                 let ex_style = unsafe { GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE) } as u32;
                 
                 if settings.menu_open {
@@ -198,10 +184,8 @@ impl Overlay {
                 }
             }
             
-            // Render
             self.render();
             
-            // ~120 FPS cap
             std::thread::sleep(std::time::Duration::from_millis(8));
         }
         
@@ -210,7 +194,7 @@ impl Overlay {
     
     /// Render frame
     fn render(&self) {
-        unsafe { let _ = InvalidateRect(self.hwnd, None, true); }
+        unsafe { let _ = InvalidateRect(Some(self.hwnd), None, true); }
         
         let settings = self.state.settings.read().clone();
         let esp_data = self.state.esp_data.read().clone();
@@ -222,7 +206,7 @@ impl Overlay {
             self.height as f32
         );
         
-        let hdc = unsafe { GetDC(self.hwnd) };
+        let hdc = unsafe { GetDC(Some(self.hwnd)) };
         unsafe { SetBkMode(hdc, TRANSPARENT); }
         
         for cmd in commands {
@@ -241,7 +225,7 @@ impl Overlay {
             self.draw_menu(hdc);
         }
         
-        unsafe { ReleaseDC(self.hwnd, hdc); }
+        unsafe { ReleaseDC(Some(self.hwnd), hdc); }
     }
     
     fn draw_rect(&self, hdc: windows::Win32::Graphics::Gdi::HDC, x: f32, y: f32, w: f32, h: f32, color: Color, thickness: i32) {
@@ -249,7 +233,7 @@ impl Overlay {
             let pen = CreatePen(PS_SOLID, thickness, windows::Win32::Foundation::COLORREF(
                 (color.r as u32) | ((color.g as u32) << 8) | ((color.b as u32) << 16)
             ));
-            let old_pen = SelectObject(hdc, pen);
+            let old_pen = SelectObject(hdc, HGDIOBJ(pen.0));
             let null_brush = GetStockObject(NULL_BRUSH);
             let old_brush = SelectObject(hdc, null_brush);
             
@@ -257,7 +241,7 @@ impl Overlay {
             
             SelectObject(hdc, old_pen);
             SelectObject(hdc, old_brush);
-            DeleteObject(pen);
+            DeleteObject(HGDIOBJ(pen.0));
         }
     }
     
@@ -275,7 +259,7 @@ impl Overlay {
             };
             
             FillRect(hdc, &rect, brush);
-            DeleteObject(brush);
+            DeleteObject(HGDIOBJ(brush.0));
         }
     }
     
@@ -285,23 +269,13 @@ impl Overlay {
         let menu_w = 400.0;
         let menu_h = 300.0;
         
-        // Background
         self.draw_rect_filled(hdc, menu_x, menu_y, menu_w, menu_h, Color::new(20, 20, 30, 240));
-        
-        // Border
         self.draw_rect(hdc, menu_x, menu_y, menu_w, menu_h, Color::new(80, 80, 200, 255), 2);
-        
-        // Title bar
         self.draw_rect_filled(hdc, menu_x, menu_y, menu_w, 35.0, Color::new(40, 40, 60, 255));
-        
-        // Accent line
         self.draw_rect_filled(hdc, menu_x, menu_y + 35.0, menu_w, 2.0, Color::new(100, 100, 255, 255));
-        
-        // ESP Section
         self.draw_rect_filled(hdc, menu_x + 20.0, menu_y + 60.0, 360.0, 120.0, Color::new(30, 30, 45, 255));
         self.draw_rect(hdc, menu_x + 20.0, menu_y + 60.0, 360.0, 120.0, Color::new(60, 60, 80, 255), 1);
         
-        // Close button
         let btn_x = menu_x + 100.0;
         let btn_y = menu_y + menu_h - 55.0;
         let btn_w = 200.0;

@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use parking_lot::RwLock;
-use log::{info, warn, error};
+use log::{info, error};
 
 use crate::memory::GameMemory;
 use crate::overlay::Overlay;

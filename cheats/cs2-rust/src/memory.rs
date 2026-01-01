@@ -3,10 +3,11 @@
 
 use std::mem;
 use std::ffi::c_void;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use glam::Vec3;
-use windows::Win32::Foundation::{HANDLE, CloseHandle, BOOL};
+use windows::Win32::Foundation::{HANDLE, CloseHandle};
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_VM_READ, PROCESS_QUERY_INFORMATION,
 };
@@ -16,15 +17,20 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
     TH32CS_SNAPPROCESS, TH32CS_SNAPMODULE, TH32CS_SNAPMODULE32,
     PROCESSENTRY32W, MODULEENTRY32W,
 };
-use windows::Win32::System::Memory::ReadProcessMemory;
+use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 
 use crate::offsets;
 use crate::esp::EspData;
 
+/// Wrapper for HANDLE to make it Send
+struct SendableHandle(HANDLE);
+unsafe impl Send for SendableHandle {}
+unsafe impl Sync for SendableHandle {}
+
 /// Game memory handle
 #[derive(Clone)]
 pub struct GameMemory {
-    handle: HANDLE,
+    handle: Arc<SendableHandle>,
     client_base: usize,
 }
 
@@ -39,7 +45,10 @@ impl GameMemory {
         
         let client_base = Self::find_module(pid, "client.dll")?;
         
-        Ok(Self { handle, client_base })
+        Ok(Self { 
+            handle: Arc::new(SendableHandle(handle)), 
+            client_base 
+        })
     }
     
     /// Find process by name
@@ -114,7 +123,7 @@ impl GameMemory {
         let mut buffer = T::default();
         unsafe {
             let _ = ReadProcessMemory(
-                self.handle,
+                self.handle.0,
                 addr as *const c_void,
                 &mut buffer as *mut T as *mut c_void,
                 mem::size_of::<T>(),
@@ -208,9 +217,11 @@ impl GameMemory {
 
 impl Drop for GameMemory {
     fn drop(&mut self) {
-        unsafe {
-            let _ = CloseHandle(self.handle);
+        // Only close if we're the last reference
+        if Arc::strong_count(&self.handle) == 1 {
+            unsafe {
+                let _ = CloseHandle(self.handle.0);
+            }
         }
     }
 }
-
