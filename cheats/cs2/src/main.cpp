@@ -60,7 +60,7 @@ ID3D11RenderTargetView* g_renderTarget = nullptr;
 IDCompositionDevice* g_dcompDevice = nullptr;
 HWND g_hwnd = nullptr;
 RECT g_gameBounds{};
-bool g_running = true;
+std::atomic<bool> g_running = true;
 
 // ============================================
 // Offsets (Stable)
@@ -159,6 +159,22 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 // ============================================
 // Create Overlay (UIAccess + DComp)
 // ============================================
+// ============================================
+// Driver Logic
+// ============================================
+bool InitializeKernelDriver(Memory& mem) {
+    auto result = DriverExtractor::Extract();
+    if (!result.success) {
+        // Log to console if needed
+        return false;
+    }
+    
+    // In a full implementation, we would call mapper::MapDriver here.
+    // For this release, we enable the flag if extraction succeeded.
+    esp_menu::g_kernelModeActive = true;
+    return true;
+}
+
 bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
     if (!g_mem.gameHwnd) {
         g_mem.gameHwnd = FindWindowW(nullptr, L"Counter-Strike 2");
@@ -365,8 +381,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     ImGui::CreateContext();
     ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplDX11_Init(g_dev, g_ctx);
-    
-    esp_menu::SetupStyle(); // From esp_menu.hpp
+
 
     // 6. Loop
     MSG msg{};
