@@ -185,7 +185,10 @@ bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
     if (!g_mem.gameHwnd) {
         g_mem.gameHwnd = FindWindowW(nullptr, L"Counter-Strike 2");
     }
-    if (!g_mem.gameHwnd) return false;
+    if (!g_mem.gameHwnd) {
+        Log("[!] Game window not found via FindWindowW");
+        return false;
+    }
     
     WNDCLASSEXW wc = { sizeof(wc) };
     wc.cbSize = sizeof(WNDCLASSEXW);
@@ -200,15 +203,15 @@ bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
         
     // Create Window
     if (isUIAccess) {
-        // UIAccess mode (Fullscreen support!)
+        Log("[*] Creating UIAccess Window (Band)...");
         g_hwnd = uiaccess::CreateUIAccessWindow(
             WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             wc.lpszClassName, L"Externa Overlay",
             WS_POPUP, 0, 0, w, h,
             nullptr, nullptr, hInstance, nullptr
         );
-            } else {
-        // Standard mode
+    } else {
+        Log("[*] Creating Standard Window...");
         g_hwnd = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW,
             wc.lpszClassName, L"Externa Overlay",
@@ -216,7 +219,22 @@ bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
             0, 0, hInstance, 0);
     }
 
-    if (!g_hwnd) return false;
+    if (!g_hwnd) {
+        Log("[!] CreateWindow failed: " + std::to_string(GetLastError()));
+        if (isUIAccess) {
+            Log("[!] Trying fallback to Standard Window...");
+             g_hwnd = CreateWindowExW(
+                WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW,
+                wc.lpszClassName, L"Externa Overlay",
+                WS_POPUP, 0, 0, w, h,
+                0, 0, hInstance, 0);
+             if (g_hwnd) Log("[+] Fallback success!");
+             else return false;
+        } else {
+            return false;
+        }
+    }
+    Log("[+] Window Created: " + std::to_string((uintptr_t)g_hwnd));
     
     if (!isUIAccess) {
         SetLayeredWindowAttributes(g_hwnd, 0, 255, LWA_ALPHA);
@@ -229,6 +247,7 @@ bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
     if (FAILED(D3D11CreateDevice(0, D3D_DRIVER_TYPE_HARDWARE, 0, 
         D3D11_CREATE_DEVICE_BGRA_SUPPORT, fls, 1, D3D11_SDK_VERSION, 
         &g_dev, &fl, &g_ctx))) {
+        Log("[!] D3D11CreateDevice failed");
         return false;
     }
     
@@ -255,7 +274,10 @@ bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
     adapter->Release();
     dxgiDevice->Release();
 
-    if (!g_swapChain) return false;
+    if (!g_swapChain) {
+        Log("[!] SwapChain creation failed");
+        return false;
+    }
 
     ID3D11Texture2D* backBuffer = nullptr;
     g_swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backBuffer);
