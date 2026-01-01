@@ -68,6 +68,13 @@ namespace esp_menu {
     bool g_kernelModeActive = false;
 }
 
+// Helper for logging
+void Log(const std::string& msg) {
+    std::cout << msg << std::endl;
+    std::ofstream f("log.txt", std::ios::app);
+    if(f) f << msg << std::endl;
+}
+
 // ============================================
 // Offsets (Stable)
 // ============================================
@@ -377,13 +384,6 @@ void render() {
             draw->AddRectFilled(ImVec2(x-5, s_orig.y - hh), ImVec2(x-3, s_orig.y), 0xFF00FF00);
         }
     }
-}
-
-// Helper for logging
-void Log(const std::string& msg) {
-    std::cout << msg << std::endl;
-    std::ofstream f("log.txt", std::ios::app);
-    if(f) f << msg << std::endl;
 }
 
 // ============================================
