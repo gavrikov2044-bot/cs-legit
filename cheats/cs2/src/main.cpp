@@ -28,6 +28,7 @@
 #include <atomic>
 #include <mutex>
 #include <optional>
+#include <iostream>
 
 // UI & Features
 #include "imgui.h"
@@ -360,6 +361,13 @@ void render() {
 // Main Entry
 // ============================================
 int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
+    // 0. Debug Console
+    AllocConsole();
+    FILE* f;
+    freopen_s(&f, "CONOUT$", "w", stdout);
+    freopen_s(&f, "CONOUT$", "w", stderr);
+    std::cout << "[INFO] ExternaCS2 v2.0 Starting..." << std::endl;
+
     // 1. UIAccess Check (Fullscreen Support)
     bool isUIAccessChild = (wcsstr(lpCmdLine, L"--uiaccess-child") != nullptr);
     
