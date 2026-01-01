@@ -608,7 +608,13 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         bool isGameActive = (fg == g_ctx.gameHwnd);
         bool isOverlayActive = (fg == g_ctx.overlayHwnd);
         
+        static bool wasActive = true;
         if (!isGameActive && !isOverlayActive && !esp_menu::g_menuOpen) {
+            if (wasActive) {
+                Log("[-] Focus lost (Alt-Tab). Pausing ESP...");
+                wasActive = false;
+            }
+            
             // We are alt-tabbed (e.g. Browser)
             // Sleep to save resources and hide overlay logic (via clear)
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -623,6 +629,11 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
             g_ctx.ctx->ClearRenderTargetView(g_ctx.renderTarget, clear);
             g_ctx.swapChain->Present(1, 0);
             continue;
+        } else {
+            if (!wasActive) {
+                Log("[+] Focus regained. Resuming ESP...");
+                wasActive = true;
+            }
         }
 
         ImGui_ImplDX11_NewFrame();
