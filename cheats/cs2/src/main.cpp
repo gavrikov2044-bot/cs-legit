@@ -227,6 +227,16 @@ struct CheatContext {
         CloseHandle(snap);
         
         gameHwnd = FindWindowW(nullptr, L"Counter-Strike 2");
+        
+        // Anti-Minimize Trick: Attach Input to Game
+        if (gameHwnd) {
+            DWORD gameTID = GetWindowThreadProcessId(gameHwnd, nullptr);
+            if (gameTID != 0) {
+                AttachThreadInput(GetCurrentThreadId(), gameTID, TRUE);
+                Log("[+] Input Attached to CS2 Thread");
+            }
+        }
+        
         return clientBase != 0;
     }
     
@@ -581,12 +591,9 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
                 SetWindowLongPtr(g_ctx.overlayHwnd, GWL_EXSTYLE, exStyle);
                 SetLayeredWindowAttributes(g_ctx.overlayHwnd, 0, 255, LWA_ALPHA);
                 
-                // CRITICAL: Return focus to Game immediately!
-                if (g_ctx.gameHwnd) {
-                    SetForegroundWindow(g_ctx.gameHwnd);
-                    SetActiveWindow(g_ctx.gameHwnd);
-                    SetFocus(g_ctx.gameHwnd);
-                }
+                // FIXED: Don't force focus back aggressively.
+                // Let Windows handle it via NOACTIVATE style.
+                // Forcing SetFocus causes flickering/minimizing in Fullscreen.
             }
         }
         
@@ -594,6 +601,28 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         if (g_ctx.processHandle) {
             DWORD exitCode = 0;
             if (GetExitCodeProcess(g_ctx.processHandle, &exitCode) && exitCode != STILL_ACTIVE) g_running = false;
+        }
+        
+        // FOCUS CHECK: Only render if Game or Menu is active
+        HWND fg = GetForegroundWindow();
+        bool isGameActive = (fg == g_ctx.gameHwnd);
+        bool isOverlayActive = (fg == g_ctx.overlayHwnd);
+        
+        if (!isGameActive && !isOverlayActive && !esp_menu::g_menuOpen) {
+            // We are alt-tabbed (e.g. Browser)
+            // Sleep to save resources and hide overlay logic (via clear)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            
+            // Clear screen transparently
+            ImGui_ImplDX11_NewFrame();
+            ImGui_ImplWin32_NewFrame();
+            ImGui::NewFrame();
+            ImGui::Render();
+            float clear[4] = {0,0,0,0};
+            g_ctx.ctx->OMSetRenderTargets(1, &g_ctx.renderTarget, nullptr);
+            g_ctx.ctx->ClearRenderTargetView(g_ctx.renderTarget, clear);
+            g_ctx.swapChain->Present(1, 0);
+            continue;
         }
 
         ImGui_ImplDX11_NewFrame();
