@@ -1,0 +1,51 @@
+name: Build Rust CS2
+
+on:
+  push:
+    paths:
+      - 'cheats/cs2-rust/**'
+      - '.github/workflows/rust-cs2.yml'
+  pull_request:
+    paths:
+      - 'cheats/cs2-rust/**'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-pc-windows-msvc
+    
+    - name: Cache Cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          cheats/cs2-rust/target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+    
+    - name: Build Release
+      working-directory: cheats/cs2-rust
+      run: cargo build --release
+    
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: externa-cs2-rust
+        path: cheats/cs2-rust/target/release/externa-cs2.exe
+        if-no-files-found: error
+

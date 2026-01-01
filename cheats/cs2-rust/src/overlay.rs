@@ -1,0 +1,337 @@
+//! Overlay window module
+//! Based on Valthrun overlay architecture
+//! Features: Stream-Proof, Transparent, Click-Through
+
+use std::sync::Arc;
+use std::mem;
+
+use anyhow::Result;
+use windows::core::w;
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM, RECT, BOOL};
+use windows::Win32::Graphics::Gdi::{
+    CreateSolidBrush, CreatePen, SelectObject, DeleteObject,
+    Rectangle, FillRect, SetBkMode, TRANSPARENT,
+    GetDC, ReleaseDC, InvalidateRect,
+    PS_SOLID, GetStockObject, NULL_BRUSH, HRGN,
+};
+use windows::Win32::Graphics::Dwm::{
+    DwmExtendFrameIntoClientArea, DwmEnableBlurBehindWindow, DwmIsCompositionEnabled,
+    DWM_BLURBEHIND, DWM_BB_ENABLE,
+};
+use windows::Win32::UI::Controls::MARGINS;
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, RegisterClassExW, DefWindowProcW, PostQuitMessage,
+    ShowWindow, GetMessageW, TranslateMessage, DispatchMessageW,
+    GetAsyncKeyState, GetSystemMetrics, GetWindowLongPtrW, SetWindowLongPtrW,
+    SetForegroundWindow, PeekMessageW, SetWindowPos, SetWindowDisplayAffinity,
+    WNDCLASSEXW, MSG, 
+    WS_POPUP, WS_VISIBLE, WS_CLIPSIBLINGS,
+    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE, WS_EX_LAYERED,
+    WM_DESTROY, WM_NCHITTEST, WM_ERASEBKGND,
+    SW_SHOWNOACTIVATE, HTTRANSPARENT, SM_CXSCREEN, SM_CYSCREEN,
+    GWL_EXSTYLE, GWL_STYLE, PM_REMOVE, HWND_TOPMOST,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE,
+    CS_HREDRAW, CS_VREDRAW,
+    // Stream-Proof flags (from Valthrun)
+    WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
+};
+use windows::Win32::UI::Input::KeyboardAndMouse::VK_INSERT;
+
+use crate::{SharedState, RUNNING};
+use crate::esp::{generate_esp_commands, DrawCommand, Color};
+
+/// Overlay window
+pub struct Overlay {
+    hwnd: HWND,
+    width: i32,
+    height: i32,
+    state: Arc<SharedState>,
+    stream_proof_enabled: bool,
+}
+
+// Store state pointer for WndProc
+static mut OVERLAY_STATE: Option<*const SharedState> = None;
+
+impl Overlay {
+    /// Create overlay window (Valthrun-style)
+    pub fn create(state: Arc<SharedState>) -> Result<Self> {
+        let width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+        let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+        
+        // Store state for WndProc
+        unsafe {
+            OVERLAY_STATE = Some(Arc::as_ptr(&state));
+        }
+        
+        // Register window class
+        let class_name = w!("ExternaOverlayRust");
+        
+        let wc = WNDCLASSEXW {
+            cbSize: mem::size_of::<WNDCLASSEXW>() as u32,
+            style: CS_HREDRAW | CS_VREDRAW,
+            lpfnWndProc: Some(wnd_proc),
+            hInstance: unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(None)? }.into(),
+            lpszClassName: class_name,
+            ..Default::default()
+        };
+        
+        unsafe { RegisterClassExW(&wc) };
+        
+        // Create window with Valthrun-style flags
+        let hwnd = unsafe {
+            CreateWindowExW(
+                WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+                class_name,
+                w!(""),
+                WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS,
+                0, 0, width, height,
+                None,
+                None,
+                None,
+                None,
+            )?
+        };
+        
+        unsafe {
+            // Check DWM composition
+            if !DwmIsCompositionEnabled()?.as_bool() {
+                log::error!("DWM Composition is disabled!");
+            }
+            
+            // Enable blur behind (Valthrun technique)
+            let mut bb = DWM_BLURBEHIND::default();
+            bb.dwFlags = DWM_BB_ENABLE;
+            bb.fEnable = BOOL::from(true);
+            bb.hRgnBlur = HRGN::default();
+            let _ = DwmEnableBlurBehindWindow(hwnd, &bb);
+            
+            // Extend frame into client area
+            let _ = DwmExtendFrameIntoClientArea(hwnd, &MARGINS {
+                cxLeftWidth: -1,
+                cxRightWidth: -1,
+                cyTopHeight: -1,
+                cyBottomHeight: -1,
+            });
+            
+            // Make window topmost
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)?;
+        }
+        
+        Ok(Self { 
+            hwnd, 
+            width, 
+            height, 
+            state,
+            stream_proof_enabled: false,
+        })
+    }
+    
+    /// Toggle Stream-Proof mode (hide from screen capture)
+    /// From Valthrun: SetWindowDisplayAffinity
+    pub fn set_stream_proof(&mut self, enabled: bool) {
+        unsafe {
+            let affinity = if enabled { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE };
+            if SetWindowDisplayAffinity(self.hwnd, affinity).is_ok() {
+                self.stream_proof_enabled = enabled;
+                log::info!("Stream-Proof: {}", if enabled { "ENABLED" } else { "DISABLED" });
+            } else {
+                log::warn!("Failed to set stream-proof mode");
+            }
+        }
+    }
+    
+    /// Run main loop
+    pub fn run(&mut self) -> Result<()> {
+        // Enable Stream-Proof by default
+        self.set_stream_proof(true);
+        
+        // Show window
+        unsafe { ShowWindow(self.hwnd, SW_SHOWNOACTIVATE) };
+        
+        let mut msg = MSG::default();
+        
+        loop {
+            // Process messages (non-blocking)
+            while unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
+                if msg.message == windows::Win32::UI::WindowsAndMessaging::WM_QUIT {
+                    RUNNING.store(false, std::sync::atomic::Ordering::Relaxed);
+                    break;
+                }
+                unsafe {
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            }
+            
+            // Check if should exit
+            if !RUNNING.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+            
+            // Handle input
+            if unsafe { GetAsyncKeyState(VK_INSERT.0 as i32) } & 1 != 0 {
+                let mut settings = self.state.settings.write();
+                settings.menu_open = !settings.menu_open;
+                
+                // Toggle click-through
+                let ex_style = unsafe { GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE) } as u32;
+                
+                if settings.menu_open {
+                    unsafe {
+                        SetWindowLongPtrW(
+                            self.hwnd, 
+                            GWL_EXSTYLE, 
+                            (ex_style & !WS_EX_TRANSPARENT.0) as isize
+                        );
+                        let _ = SetForegroundWindow(self.hwnd);
+                    }
+                    log::info!("Menu opened");
+                } else {
+                    unsafe {
+                        SetWindowLongPtrW(
+                            self.hwnd, 
+                            GWL_EXSTYLE, 
+                            (ex_style | WS_EX_TRANSPARENT.0) as isize
+                        );
+                    }
+                    log::info!("Menu closed");
+                }
+            }
+            
+            // Render
+            self.render();
+            
+            // ~120 FPS cap
+            std::thread::sleep(std::time::Duration::from_millis(8));
+        }
+        
+        Ok(())
+    }
+    
+    /// Render frame
+    fn render(&self) {
+        unsafe { let _ = InvalidateRect(self.hwnd, None, true); }
+        
+        let settings = self.state.settings.read().clone();
+        let esp_data = self.state.esp_data.read().clone();
+        
+        let commands = generate_esp_commands(
+            &esp_data, 
+            &settings, 
+            self.width as f32, 
+            self.height as f32
+        );
+        
+        let hdc = unsafe { GetDC(self.hwnd) };
+        unsafe { SetBkMode(hdc, TRANSPARENT); }
+        
+        for cmd in commands {
+            match cmd {
+                DrawCommand::Rect { x, y, w, h, color, thickness } => {
+                    self.draw_rect(hdc, x, y, w, h, color, thickness as i32);
+                }
+                DrawCommand::RectFilled { x, y, w, h, color } => {
+                    self.draw_rect_filled(hdc, x, y, w, h, color);
+                }
+                DrawCommand::Text { .. } => {}
+            }
+        }
+        
+        if settings.menu_open {
+            self.draw_menu(hdc);
+        }
+        
+        unsafe { ReleaseDC(self.hwnd, hdc); }
+    }
+    
+    fn draw_rect(&self, hdc: windows::Win32::Graphics::Gdi::HDC, x: f32, y: f32, w: f32, h: f32, color: Color, thickness: i32) {
+        unsafe {
+            let pen = CreatePen(PS_SOLID, thickness, windows::Win32::Foundation::COLORREF(
+                (color.r as u32) | ((color.g as u32) << 8) | ((color.b as u32) << 16)
+            ));
+            let old_pen = SelectObject(hdc, pen);
+            let null_brush = GetStockObject(NULL_BRUSH);
+            let old_brush = SelectObject(hdc, null_brush);
+            
+            Rectangle(hdc, x as i32, y as i32, (x + w) as i32, (y + h) as i32);
+            
+            SelectObject(hdc, old_pen);
+            SelectObject(hdc, old_brush);
+            DeleteObject(pen);
+        }
+    }
+    
+    fn draw_rect_filled(&self, hdc: windows::Win32::Graphics::Gdi::HDC, x: f32, y: f32, w: f32, h: f32, color: Color) {
+        unsafe {
+            let brush = CreateSolidBrush(windows::Win32::Foundation::COLORREF(
+                (color.r as u32) | ((color.g as u32) << 8) | ((color.b as u32) << 16)
+            ));
+            
+            let rect = RECT {
+                left: x as i32,
+                top: y as i32,
+                right: (x + w) as i32,
+                bottom: (y + h) as i32,
+            };
+            
+            FillRect(hdc, &rect, brush);
+            DeleteObject(brush);
+        }
+    }
+    
+    fn draw_menu(&self, hdc: windows::Win32::Graphics::Gdi::HDC) {
+        let menu_x = (self.width / 2 - 200) as f32;
+        let menu_y = (self.height / 2 - 150) as f32;
+        let menu_w = 400.0;
+        let menu_h = 300.0;
+        
+        // Background
+        self.draw_rect_filled(hdc, menu_x, menu_y, menu_w, menu_h, Color::new(20, 20, 30, 240));
+        
+        // Border
+        self.draw_rect(hdc, menu_x, menu_y, menu_w, menu_h, Color::new(80, 80, 200, 255), 2);
+        
+        // Title bar
+        self.draw_rect_filled(hdc, menu_x, menu_y, menu_w, 35.0, Color::new(40, 40, 60, 255));
+        
+        // Accent line
+        self.draw_rect_filled(hdc, menu_x, menu_y + 35.0, menu_w, 2.0, Color::new(100, 100, 255, 255));
+        
+        // ESP Section
+        self.draw_rect_filled(hdc, menu_x + 20.0, menu_y + 60.0, 360.0, 120.0, Color::new(30, 30, 45, 255));
+        self.draw_rect(hdc, menu_x + 20.0, menu_y + 60.0, 360.0, 120.0, Color::new(60, 60, 80, 255), 1);
+        
+        // Close button
+        let btn_x = menu_x + 100.0;
+        let btn_y = menu_y + menu_h - 55.0;
+        let btn_w = 200.0;
+        let btn_h = 40.0;
+        
+        self.draw_rect_filled(hdc, btn_x, btn_y, btn_w, btn_h, Color::new(180, 40, 40, 255));
+        self.draw_rect(hdc, btn_x, btn_y, btn_w, btn_h, Color::new(220, 60, 60, 255), 1);
+    }
+}
+
+/// Window procedure
+unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    match msg {
+        WM_DESTROY => {
+            RUNNING.store(false, std::sync::atomic::Ordering::Relaxed);
+            PostQuitMessage(0);
+            LRESULT(0)
+        }
+        WM_ERASEBKGND => {
+            LRESULT(1)
+        }
+        WM_NCHITTEST => {
+            if let Some(state_ptr) = OVERLAY_STATE {
+                let state = &*state_ptr;
+                if !state.settings.read().menu_open {
+                    return LRESULT(HTTRANSPARENT as isize);
+                }
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
