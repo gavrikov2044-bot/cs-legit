@@ -122,7 +122,8 @@ DWORD GetSyscallIdClean() {
     
     if (NtOpenSection(&section, SECTION_MAP_READ, &oa) != 0) return 0;
     
-    NTSTATUS status = NtMapViewOfSection(section, GetCurrentProcess(), &base, 0, 0, NULL, &size, ViewUnmap, 0, PAGE_READONLY);
+    // ViewUnmap is 2
+    NTSTATUS status = NtMapViewOfSection(section, GetCurrentProcess(), &base, 0, 0, NULL, &size, 2, 0, PAGE_READONLY);
     CloseHandle(section);
     
     if (status != 0 || !base) return 0;
@@ -461,7 +462,8 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
 
     // 2. Driver (Optional Mapping)
     Log("[*] Initializing Driver...");
-    if (DriverExtractor::Extract()) {
+    auto drv = DriverExtractor::Extract();
+    if (drv.success) {
         esp_menu::g_kernelModeActive = true; 
     }
     atexit(CleanupExtractedDriver);
@@ -489,7 +491,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     int h = GetSystemMetrics(SM_CYSCREEN);
     g_ctx.gameBounds = {0, 0, w, h};
 
-    if (isUIAccess) {
+    if (isUIAccessChild) {
         g_ctx.overlayHwnd = uiaccess::CreateUIAccessWindow(
             WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             wc.lpszClassName, L"Externa Overlay", WS_POPUP, 0, 0, w, h, nullptr, nullptr, hInstance, nullptr
