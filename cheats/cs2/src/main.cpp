@@ -89,7 +89,48 @@ namespace offsets {
     constexpr uintptr_t m_vecAbsOrigin = 0xD0;
     constexpr uintptr_t m_hPlayerPawn = 0x8FC;
     constexpr uintptr_t m_iszPlayerName = 0x6E8;
+    constexpr uintptr_t m_ArmorValue = 0x1518; // Standard Armor Offset
 }
+
+// ============================================
+// Direct Syscalls (Ring 3 Stealth)
+// ============================================
+extern "C" NTSTATUS DirectSyscall(
+    DWORD syscallNumber,
+    HANDLE ProcessHandle,
+    PVOID BaseAddress,
+    PVOID Buffer,
+    SIZE_T Size,
+    PSIZE_T BytesRead
+);
+
+DWORD GetNtReadVirtualMemorySyscall() {
+    // Dynamic SSN retrieval (Simple approach)
+    // In real prod code, we'd use Halos Gate or similar.
+    // Windows 10/11 common offsets:
+    // 10 22H2: 0x3F
+    // 11 21H2: 0x3F
+    // 11 22H2: 0x3F
+    // 11 23H2: 0x3F
+    // It's quite stable recently.
+    // Better way: Parse ntdll.dll export.
+    
+    HMODULE hNtdll = GetModuleHandleA("ntdll.dll");
+    if (!hNtdll) return 0x3F; // Fallback
+    
+    FARPROC func = GetProcAddress(hNtdll, "NtReadVirtualMemory");
+    if (!func) return 0x3F;
+    
+    BYTE* p = (BYTE*)func;
+    // Check for "mov eax, SSN" pattern (B8 XX XX XX XX)
+    if (p[0] == 0x4C && p[1] == 0x8B && p[2] == 0xD1 && p[3] == 0xB8) {
+         return *(DWORD*)(p + 4);
+    }
+    
+    return 0x3F; // Default fallback
+}
+
+DWORD g_syscallSSN = 0;
 
 // ============================================
 // Memory System (Simple & Fast)
@@ -101,6 +142,14 @@ public:
     HWND gameHwnd = nullptr;
     
     bool attach() {
+        // Init SSN
+        g_syscallSSN = GetNtReadVirtualMemorySyscall();
+        if (g_syscallSSN != 0x3F) {
+            Log("[+] Stealth Mode: Dynamic SSN Found (" + std::to_string(g_syscallSSN) + ")");
+        } else {
+            Log("[!] Stealth Mode: SSN Lookup Failed/Default. Using 0x3F.");
+        }
+        
         HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         PROCESSENTRY32W entry{sizeof(entry)};
         
@@ -141,11 +190,37 @@ public:
     template<typename T>
     T read(uintptr_t addr) {
         T val{}; 
-        ReadProcessMemory(handle, (LPCVOID)addr, &val, sizeof(T), nullptr);
+        readRaw(addr, &val, sizeof(T));
         return val;
     }
     
     bool readRaw(uintptr_t addr, void* buf, size_t size) {
+        // Priority 1: Kernel Driver (Ring 0) - TODO: Implement mapping check
+        if (esp_menu::g_kernelModeActive) {
+            // In a real driver setup, we would use IOCTL here.
+            // Since this version maps the driver but the communication is not fully set up in this snippet,
+            // we fall back to Ring 3 methods if driver is not explicitly handling it.
+            // For now, let's assume if g_kernelModeActive is true, we want to use Syscall or Driver.
+            // We'll stick to Syscall for this "Stealth Mode" if Driver IOCTL isn't ready.
+        }
+
+        // Priority 2: Direct Syscall (Ring 3 Stealth)
+        if (g_syscallSSN > 0) {
+            SIZE_T bytesRead = 0;
+            NTSTATUS status = DirectSyscall(g_syscallSSN, handle, (PVOID)addr, buf, size, &bytesRead);
+            if (status != 0) {
+                // Log once per session to avoid spam
+                static bool logged = false;
+                if (!logged) {
+                    Log("[!] Syscall Read Failed: Status " + std::to_string(status));
+                    logged = true;
+                }
+                return false;
+            }
+            return true; 
+        }
+        
+        // Priority 3: WinAPI (Standard)
         return ReadProcessMemory(handle, (LPCVOID)addr, buf, size, nullptr);
     }
     
@@ -212,8 +287,9 @@ bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
     // Create Window
     if (isUIAccess) {
         Log("[*] Creating UIAccess Window (Band)...");
+        // Removed WS_EX_LAYERED to rely on DwmExtendFrameIntoClientArea for transparency
         g_hwnd = uiaccess::CreateUIAccessWindow(
-            WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW,
             wc.lpszClassName, L"Externa Overlay",
             WS_POPUP, 0, 0, w, h,
             nullptr, nullptr, hInstance, nullptr
@@ -221,7 +297,7 @@ bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
     } else {
         Log("[*] Creating Standard Window...");
         g_hwnd = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW,
+            WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW, // Removed WS_EX_LAYERED
             wc.lpszClassName, L"Externa Overlay",
             WS_POPUP, 0, 0, w, h,
             0, 0, hInstance, 0);
@@ -229,24 +305,15 @@ bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
 
     if (!g_hwnd) {
         Log("[!] CreateWindow failed: " + std::to_string(GetLastError()));
-        if (isUIAccess) {
-            Log("[!] Trying fallback to Standard Window...");
-             g_hwnd = CreateWindowExW(
-                WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW,
-                wc.lpszClassName, L"Externa Overlay",
-                WS_POPUP, 0, 0, w, h,
-                0, 0, hInstance, 0);
-             if (g_hwnd) Log("[+] Fallback success!");
-             else return false;
-        } else {
-            return false;
-        }
+         return false;
     }
     Log("[+] Window Created: " + std::to_string((uintptr_t)g_hwnd));
     
-    if (!isUIAccess) {
-        SetLayeredWindowAttributes(g_hwnd, 0, 255, LWA_ALPHA);
-    }
+    // TRANSPARENCY FIX:
+    // 1. Remove SetLayeredWindowAttributes (It causes black screen with DWM)
+    // 2. Extend DWM Frame into client area (This enables per-pixel alpha)
+    MARGINS margins = {-1};
+    DwmExtendFrameIntoClientArea(g_hwnd, &margins);
     
     // Init DX11
     D3D_FEATURE_LEVEL fl;
@@ -269,23 +336,19 @@ bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
     
     DXGI_SWAP_CHAIN_DESC1 sd1{};
     sd1.Width = w; sd1.Height = h;
-    sd1.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // Changed to R8G8B8A8
+    sd1.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     sd1.SampleDesc.Count = 1;
     sd1.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    sd1.BufferCount = 2; // For FLIP
-    sd1.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD; // Try FLIP again but with different Alpha
-    sd1.AlphaMode = DXGI_ALPHA_MODE_IGNORE; // Change PREMULTIPLIED to IGNORE
+    sd1.BufferCount = 1;
+    sd1.SwapEffect = DXGI_SWAP_EFFECT_DISCARD; // Safest for overlay
+    sd1.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED; // DWM handles alpha
     sd1.Scaling = DXGI_SCALING_STRETCH;
     
-    // Fallback if FLIP fails
     HRESULT hr = factory->CreateSwapChainForHwnd(g_dev, g_hwnd, &sd1, nullptr, nullptr, &g_swapChain);
     
     if (FAILED(hr)) {
-        Log("[!] FLIP SwapChain failed: " + std::to_string(hr) + ". Trying DISCARD...");
-        sd1.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-        sd1.BufferCount = 1;
-        sd1.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
-        hr = factory->CreateSwapChainForHwnd(g_dev, g_hwnd, &sd1, nullptr, nullptr, &g_swapChain);
+         Log("[!] SwapChain creation failed: " + std::to_string(hr));
+         return false;
     }
     
     factory->Release();
@@ -307,6 +370,113 @@ bool createOverlay(HINSTANCE hInstance, bool isUIAccess) {
 }
 
 // ============================================
+// Optimization & Smoothness (Multi-threaded)
+// ============================================
+struct SmoothEntity {
+    omath::Vector3<float> currentPos;
+    omath::Vector3<float> targetPos; // Not used in simple lerp, but good for future
+    omath::Vector3<float> origin;    // Raw read
+    int health;
+    int armor;
+    bool valid;
+};
+// Thread-safe data
+std::array<SmoothEntity, 65> g_entityCache;
+std::mutex g_cacheMutex;
+struct ViewMatrix { float m[4][4]; } g_viewMatrix;
+
+float Lerp(float a, float b, float t) {
+    return a + (b - a) * t;
+}
+
+// ============================================
+// Memory Thread (Background Reader)
+// ============================================
+void MemoryThread() {
+    using namespace omath;
+    Log("[*] Memory Thread Started");
+    
+    while (g_running) {
+        if (!g_mem.ok()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
+        // 1. Read Globals
+        ViewMatrix vm;
+        g_mem.readRaw(g_mem.client + offsets::dwViewMatrix, &vm, sizeof(vm));
+        
+        uintptr_t localController = g_mem.read<uintptr_t>(g_mem.client + offsets::dwLocalPlayerController);
+        uintptr_t localPawn = 0;
+        int localTeam = 0;
+        
+        if (localController) {
+            uint32_t handle = g_mem.read<uint32_t>(localController + offsets::m_hPlayerPawn);
+            uintptr_t list = g_mem.read<uintptr_t>(g_mem.client + offsets::dwEntityList);
+            if (list) {
+                uintptr_t entry = g_mem.read<uintptr_t>(list + 0x8 * ((handle & 0x7FFF) >> 9) + 16);
+                localPawn = g_mem.read<uintptr_t>(entry + 112 * (handle & 0x1FF));
+                localTeam = g_mem.read<int>(localPawn + offsets::m_iTeamNum);
+            }
+        }
+
+        uintptr_t entityList = g_mem.read<uintptr_t>(g_mem.client + offsets::dwEntityList);
+        
+        // 2. Read Entities
+        {
+            std::lock_guard<std::mutex> lock(g_cacheMutex);
+            g_viewMatrix = vm; // Update matrix
+            
+            if (entityList) {
+                for (int i = 1; i <= 64; i++) {
+                    auto& ent = g_entityCache[i];
+                    ent.valid = false;
+                    
+                    uintptr_t listEntry = g_mem.read<uintptr_t>(entityList + (8 * (i & 0x7FFF) >> 9) + 16);
+                    if (!listEntry) continue;
+                    
+                    uintptr_t controller = g_mem.read<uintptr_t>(listEntry + 112 * (i & 0x1FF));
+                    if (!controller) continue;
+                    
+                    uint32_t pawnHandle = g_mem.read<uint32_t>(controller + offsets::m_hPlayerPawn);
+                    if (!pawnHandle) continue;
+                    
+                    uintptr_t listEntry2 = g_mem.read<uintptr_t>(entityList + 0x8 * ((pawnHandle & 0x7FFF) >> 9) + 16);
+                    uintptr_t pawn = g_mem.read<uintptr_t>(listEntry2 + 112 * (pawnHandle & 0x1FF));
+                    
+                    if (!pawn || pawn == localPawn) continue;
+                    
+                    int health = g_mem.read<int>(pawn + offsets::m_iHealth);
+                    if (health <= 0 || health > 100) continue;
+
+                    int team = g_mem.read<int>(pawn + offsets::m_iTeamNum);
+                    if (team == localTeam) continue;
+
+                    uintptr_t node = g_mem.read<uintptr_t>(pawn + offsets::m_pGameSceneNode);
+                    Vector3<float> origin = g_mem.read<Vector3<float>>(node + offsets::m_vecAbsOrigin);
+                    
+                    int armor = g_mem.read<int>(pawn + offsets::m_ArmorValue);
+                    
+                    // Fill Cache
+                    ent.health = health;
+                    ent.armor = armor;
+                    ent.origin = origin;
+                    ent.valid = true;
+                    
+                    // Init smooth pos if first time
+                    if (ent.currentPos.x == 0 && ent.currentPos.y == 0) {
+                         ent.currentPos = origin;
+                    }
+                }
+            }
+        }
+        
+        // Sleep to save CPU (1ms is enough for >500hz reading)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
+// ============================================
 // Render Loop
 // ============================================
 void render() {
@@ -314,13 +484,20 @@ void render() {
     
     // Config aliases
     auto& s = esp_menu::g_settings;
-    if (!s.boxESP && !s.nameESP && !s.healthBar) return;
+    if (!s.boxESP && !s.healthBar && !s.armorBar) return;
 
     auto* draw = ImGui::GetBackgroundDrawList();
+    float dt = ImGui::GetIO().DeltaTime;
     
-    // Read Matrix
-    struct ViewMatrix { float m[4][4]; } matrix;
-    g_mem.readRaw(g_mem.client + offsets::dwViewMatrix, &matrix, sizeof(matrix));
+    // Lock and Copy Data
+    // We copy to stack to release mutex ASAP, avoiding render lag
+    ViewMatrix matrix;
+    std::array<SmoothEntity, 65> entities;
+    {
+        std::lock_guard<std::mutex> lock(g_cacheMutex);
+        matrix = g_viewMatrix;
+        entities = g_entityCache;
+    }
     
     auto w2s = [&](const Vector3<float>& v, Vector3<float>& out) -> bool {
         float w = matrix.m[3][0] * v.x + matrix.m[3][1] * v.y + matrix.m[3][2] * v.z + matrix.m[3][3];
@@ -331,52 +508,41 @@ void render() {
         return true;
     };
 
-    uintptr_t localController = g_mem.read<uintptr_t>(g_mem.client + offsets::dwLocalPlayerController);
-    uintptr_t localPawn = 0;
-    int localTeam = 0;
-    
-    if (localController) {
-        uint32_t handle = g_mem.read<uint32_t>(localController + offsets::m_hPlayerPawn);
-        uintptr_t list = g_mem.read<uintptr_t>(g_mem.client + offsets::dwEntityList);
-        if (list) {
-            uintptr_t entry = g_mem.read<uintptr_t>(list + 0x8 * ((handle & 0x7FFF) >> 9) + 16);
-            localPawn = g_mem.read<uintptr_t>(entry + 112 * (handle & 0x1FF));
-            localTeam = g_mem.read<int>(localPawn + offsets::m_iTeamNum);
-        }
-    }
-
-    uintptr_t entityList = g_mem.read<uintptr_t>(g_mem.client + offsets::dwEntityList);
-    if (!entityList) return;
-        
-    // Entity Loop (Optimized)
+    // Entity Loop (Draw Only)
     for (int i = 1; i <= 64; i++) {
-        uintptr_t listEntry = g_mem.read<uintptr_t>(entityList + (8 * (i & 0x7FFF) >> 9) + 16);
-        if (!listEntry) continue;
+        auto& ent = entities[i];
+        if (!ent.valid) continue;
         
-        uintptr_t controller = g_mem.read<uintptr_t>(listEntry + 112 * (i & 0x1FF));
-        if (!controller) continue;
+        // --- SMOOTHING LOGIC ---
+        // Interpolate position to remove jitter
+        // Since we copied the cache, we need to maintain state locally for smoothing
+        static std::map<int, Vector3<float>> s_smoothPos;
+        Vector3<float>& smoothPos = s_smoothPos[i];
         
-        uint32_t pawnHandle = g_mem.read<uint32_t>(controller + offsets::m_hPlayerPawn);
-        if (!pawnHandle) continue;
+        if (smoothPos.x == 0 && smoothPos.y == 0) smoothPos = ent.origin;
         
-        uintptr_t listEntry2 = g_mem.read<uintptr_t>(entityList + 0x8 * ((pawnHandle & 0x7FFF) >> 9) + 16);
-        uintptr_t pawn = g_mem.read<uintptr_t>(listEntry2 + 112 * (pawnHandle & 0x1FF));
+        // Lerp factor
+        float lerpSpeed = 25.0f * dt;
         
-        if (!pawn || pawn == localPawn) continue;
+        // TELEPORT CHECK: If distance is too big (> 2.0m), snap immediately (Respawn/Teleport)
+        float distSq = (smoothPos.x - ent.origin.x)*(smoothPos.x - ent.origin.x) + 
+                       (smoothPos.y - ent.origin.y)*(smoothPos.y - ent.origin.y) + 
+                       (smoothPos.z - ent.origin.z)*(smoothPos.z - ent.origin.z);
+                       
+        if (distSq > 400.0f) { // 20m^2
+            smoothPos = ent.origin;
+        } else {
+            smoothPos.x = Lerp(smoothPos.x, ent.origin.x, lerpSpeed);
+            smoothPos.y = Lerp(smoothPos.y, ent.origin.y, lerpSpeed);
+            smoothPos.z = Lerp(smoothPos.z, ent.origin.z, lerpSpeed);
+        }
         
-        int health = g_mem.read<int>(pawn + offsets::m_iHealth);
-        if (health <= 0 || health > 100) continue;
-        
-        int team = g_mem.read<int>(pawn + offsets::m_iTeamNum);
-        if (team == localTeam) continue; // Enemy only
-
-        // Read Pos
-        uintptr_t node = g_mem.read<uintptr_t>(pawn + offsets::m_pGameSceneNode);
-        Vector3<float> origin = g_mem.read<Vector3<float>>(node + offsets::m_vecAbsOrigin);
-        Vector3<float> head = origin; head.z += 72.0f; // Simple head offset
+        Vector3<float> smoothHead = smoothPos;
+        smoothHead.z += 72.0f;
+        // -----------------------
 
         Vector3<float> s_orig, s_head;
-        if (!w2s(origin, s_orig) || !w2s(head, s_head)) continue;
+        if (!w2s(smoothPos, s_orig) || !w2s(smoothHead, s_head)) continue;
 
         float h = s_orig.y - s_head.y;
         float w = h * 0.4f;
@@ -384,15 +550,25 @@ void render() {
 
         // Draw Box
         if (s.boxESP) {
-            draw->AddRect(ImVec2(x, s_head.y), ImVec2(x+w, s_orig.y), 
+             draw->AddRect(ImVec2(x-1, s_head.y-1), ImVec2(x+w+1, s_orig.y+1), 0xFF000000, 0, 0, 3.0f);
+             draw->AddRect(ImVec2(x, s_head.y), ImVec2(x+w, s_orig.y), 
                 ImGui::ColorConvertFloat4ToU32(ImVec4(1,0,0,1)), 0, 0, 1.5f);
-}
+        }
 
         // Draw Health
         if (s.healthBar) {
-            draw->AddRectFilled(ImVec2(x-5, s_head.y), ImVec2(x-3, s_orig.y), 0xFF000000);
-            float hh = h * (health / 100.0f);
-            draw->AddRectFilled(ImVec2(x-5, s_orig.y - hh), ImVec2(x-3, s_orig.y), 0xFF00FF00);
+            float healthH = h * (ent.health / 100.0f);
+            draw->AddRectFilled(ImVec2(x-6, s_head.y), ImVec2(x-2, s_orig.y), 0x80000000); 
+            draw->AddRectFilled(ImVec2(x-5, s_orig.y - healthH), ImVec2(x-3, s_orig.y), 0xFF00FF00); 
+            draw->AddRect(ImVec2(x-6, s_head.y), ImVec2(x-2, s_orig.y), 0xFF000000, 0, 0, 1.0f); 
+        }
+
+        // Draw Armor
+        if (s.armorBar && ent.armor > 0) {
+            float armorH = h * (ent.armor / 100.0f);
+            draw->AddRectFilled(ImVec2(x+w+2, s_head.y), ImVec2(x+w+6, s_orig.y), 0x80000000); 
+            draw->AddRectFilled(ImVec2(x+w+3, s_orig.y - armorH), ImVec2(x+w+5, s_orig.y), 0xFFEDA100); 
+            draw->AddRect(ImVec2(x+w+2, s_head.y), ImVec2(x+w+6, s_orig.y), 0xFF000000, 0, 0, 1.0f); 
         }
     }
 }
@@ -426,6 +602,10 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     } else {
         Log("[+] Running in UIAccess Child Mode.");
     }
+    
+    // Start Memory Thread
+    std::thread memoryThread(MemoryThread);
+    memoryThread.detach();
 
     // 2. Load Driver
     Log("[*] Initializing Driver...");
@@ -484,6 +664,17 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
+        
+        // AUTO-EXIT CHECK
+        if (g_mem.handle) {
+            DWORD exitCode = 0;
+            if (GetExitCodeProcess(g_mem.handle, &exitCode)) {
+                if (exitCode != STILL_ACTIVE) {
+                    Log("[!] Game closed. Exiting...");
+                    g_running = false;
+                }
+            }
+        }
         
         render();
         

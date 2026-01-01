@@ -41,9 +41,10 @@ namespace esp_menu {
         
         // Basic Visuals
         bool boxESP = true;
-        bool nameESP = true;
+        bool nameESP = false;
         bool healthBar = true;
-        bool distanceESP = true;
+        bool armorBar = true; // New
+        bool distanceESP = false;
         bool skeletonESP = false;
         bool snaplines = false;
         
@@ -506,29 +507,9 @@ namespace esp_menu {
             if (ImGui::BeginTabItem(" VISUALS ")) {
                 ImGui::Spacing();
                 
-                // ESP MODE SELECTOR
-                ImGui::TextColored(Colors::warning, "ESP MODE");
-                ImGui::Spacing();
-                
-                const char* modeNames[] = { "C++ ESP", "Lua ESP", "Both (C++ + Lua)" };
-                int currentMode = static_cast<int>(g_settings.espMode);
-                ImGui::SetNextItemWidth(200);
-                if (ImGui::Combo("##espmode", &currentMode, modeNames, 3)) {
-                    g_settings.espMode = static_cast<ESPMode>(currentMode);
-                }
-                ImGui::SameLine();
-                ImGui::TextColored(Colors::text_secondary, "(?)");
-                if (ImGui::IsItemHovered()) {
-                    ImGui::BeginTooltip();
-                    ImGui::Text("C++ ESP = Fast built-in ESP");
-                    ImGui::Text("Lua ESP = Custom scripts only");
-                    ImGui::Text("Both = C++ + Lua overlay");
-                    ImGui::EndTooltip();
-                }
-                
-                ImGui::Spacing();
-                ImGui::Separator();
-                ImGui::Spacing();
+                // ESP MODE SELECTOR REMOVED (Defaulting to C++)
+                // ImGui::TextColored(Colors::warning, "ESP MODE");
+                // ...
                 
                 ImGui::Columns(2, "visual_cols", false);
                 
@@ -537,44 +518,33 @@ namespace esp_menu {
                 ImGui::Spacing();
                 
                 StyledCheckbox("Box ESP", &g_settings.boxESP, "Draw 2D Box around enemies");
-                StyledCheckbox("Name ESP", &g_settings.nameESP, "Show enemy names");
+                // StyledCheckbox("Name ESP", &g_settings.nameESP, "Show enemy names");
                 StyledCheckbox("Health Bar", &g_settings.healthBar, "Show health status");
-                StyledCheckbox("Distance", &g_settings.distanceESP, "Show distance in meters");
-                StyledCheckbox("Snaplines", &g_settings.snaplines, "Draw lines to enemies");
+                StyledCheckbox("Armor Bar", &g_settings.armorBar, "Show armor status");
+                // StyledCheckbox("Distance", &g_settings.distanceESP, "Show distance in meters");
+                // StyledCheckbox("Snaplines", &g_settings.snaplines, "Draw lines to enemies");
 
                 ImGui::Spacing();
                 ImGui::TextColored(Colors::primary, "SETTINGS");
                 ImGui::Spacing();
-                StyledSlider("Max Distance", &g_settings.maxDistance, 100.0f, 1000.0f, "%.0f m");
+                
+                // UNLOAD BUTTON
+                ImGui::Spacing();
+                ImGui::PushStyleColor(ImGuiCol_Button, Colors::danger);
+                if (ImGui::Button("UNLOAD CHEAT", ImVec2(180, 40))) {
+                    g_running = false;
+                }
+                ImGui::PopStyleColor();
                 
                 ImGui::NextColumn();
                 
                 // Column 2: Skeleton
-                ImGui::TextColored(Colors::primary, "SKELETON & BONES");
-                ImGui::Spacing();
+                // ImGui::TextColored(Colors::primary, "SKELETON & BONES");
+                // ImGui::Spacing();
                 
-                StyledCheckbox("Skeleton ESP", &g_settings.skeletonESP, "Draw player skeleton");
-                StyledCheckbox("Health Color", &g_settings.healthBasedSkeleton, "Color skeleton based on HP");
-                StyledSlider("Thickness", &g_settings.skeletonThickness, 0.5f, 5.0f, "%.1f px");
+                // StyledCheckbox("Skeleton ESP", &g_settings.skeletonESP, "Draw player skeleton");
+                // ... (Hidden)
                 
-                ImGui::Spacing();
-                
-                StyledCheckbox("Joint Dots", &g_settings.jointDots, "Draw dots on joints");
-                if (g_settings.jointDots) {
-                    ImGui::Indent();
-                    StyledSlider("Dot Size", &g_settings.jointDotSize, 1.0f, 8.0f, "%.1f");
-                    ImGui::Unindent();
-                }
-                
-                StyledCheckbox("Head Hitbox", &g_settings.headHitbox, "Draw circle around head");
-                if (g_settings.headHitbox) {
-                    ImGui::Indent();
-                    StyledSlider("Hitbox Radius", &g_settings.headHitboxRadius, 3.0f, 20.0f, "%.1f");
-                    ImGui::Unindent();
-                }
-
-                ImGui::Spacing();
-                ImGui::Separator();
                 ImGui::Spacing();
                 
                 ImGui::TextColored(Colors::text_secondary, "PREVIEW");
@@ -664,39 +634,7 @@ namespace esp_menu {
                 ImGui::EndTabItem();
             }
             
-            // --- TAB: LUA ---
-            #if LUAJIT_ENABLED
-            if (ImGui::BeginTabItem(" LUA ")) {
-                ImGui::Spacing();
-                
-                ImGui::TextColored(Colors::primary, "LUA SCRIPTING");
-                ImGui::Spacing();
-                
-                bool luaState = g_luaEnabled;
-                if (ImGui::Checkbox("Enable Lua System", &luaState)) {
-                    g_luaEnabled = luaState;
-                }
-                
-                ImGui::Spacing();
-                if (g_luaEnabled) {
-                    ImGui::TextColored(Colors::success, "Lua Engine: RUNNING");
-                    ImGui::TextDisabled("Scripts loaded from /scripts folder");
-                    ImGui::Spacing();
-                    
-                    if (ImGui::Button("RELOAD SCRIPTS", ImVec2(150, 30))) {
-                         // This would need to call reloadLua() from main.cpp
-                         // But we can't easily call it here without extern.
-                         // For now user can use Hotkey F6
-                    }
-                    ImGui::TextDisabled("Press ScrollLock to reload scripts");
-                    ImGui::TextDisabled("Press PgDn to open Lua Menu");
-                } else {
-                    ImGui::TextColored(Colors::danger, "Lua Engine: STOPPED");
-                }
-                
-                ImGui::EndTabItem();
-            }
-            #endif
+            // LUA TAB REMOVED
             
             ImGui::EndTabBar();
         }
