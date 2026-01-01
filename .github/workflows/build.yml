@@ -19,9 +19,7 @@ jobs:
       uses: microsoft/setup-msbuild@v1.1
       
     - name: Setup CMake
-      uses: jwlawles/cmake-build-command@v1
-      with:
-        cmake-version: 'latest'
+      uses: lukka/get-cmake@latest
         
     - name: Configure CMake
       run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
