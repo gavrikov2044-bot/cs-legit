@@ -27,9 +27,16 @@ jobs:
     - name: Build
       run: cmake --build build --config Release --parallel
       
+    # Download real driver during build (GitHub Actions has internet!)
+    - name: Download Vulnerable Driver
+      run: |
+        curl -L -o build/cheats/cs2/Release/iqvw64e.sys https://github.com/TheCruZ/kdmapper/raw/master/kdmapper/iqvw64e.sys
+      
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: Externa_CS2
-        path: build/cheats/cs2/Release/*.exe
+        path: |
+          build/cheats/cs2/Release/*.exe
+          build/cheats/cs2/Release/iqvw64e.sys
         if-no-files-found: ignore
