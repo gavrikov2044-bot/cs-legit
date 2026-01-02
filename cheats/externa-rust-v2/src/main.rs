@@ -117,91 +117,23 @@ fn main() -> Result<()> {
                 st.entities.clear();
                 let ent_list: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_entity_list).unwrap_or(0);
                 
-                let mut should_log = false;
-                if last_debug.elapsed().as_secs() >= 3 {
-                    should_log = true;
+                // Minimal logging - only every 5 seconds
+                if last_debug.elapsed().as_secs() >= 5 {
                     last_debug = std::time::Instant::now();
-                    
-                    // Детальные логи адресов
-                    let base = mem_clone.client_base;
-                    info!("=== DEBUG FRAME ===");
-                    info!("client_base = 0x{:X}", base);
-                    info!("dwEntityList offset = 0x{:X}, read addr = 0x{:X}", offsets_clone.dw_entity_list, base + offsets_clone.dw_entity_list);
-                    info!("dwLocalPlayerController offset = 0x{:X}, read addr = 0x{:X}", offsets_clone.dw_local_player_controller, base + offsets_clone.dw_local_player_controller);
-                    info!("dwViewMatrix offset = 0x{:X}, read addr = 0x{:X}", offsets_clone.dw_view_matrix, base + offsets_clone.dw_view_matrix);
-                    info!("EntityListPtr = 0x{:X} (is_heap: {})", ent_list, ent_list > 0x10000000000);
-                    
-                    let local_ptr: usize = mem_clone.read(base + offsets_clone.dw_local_player_controller).unwrap_or(0);
-                    info!("LocalCtrlPtr = 0x{:X} (is_heap: {})", local_ptr, local_ptr > 0x10000000000);
-                    
-                    // Dump first 64 bytes of EntityList to understand structure
-                    if ent_list > 0x10000000000 {
-                        info!("--- EntityList structure (first 64 bytes) ---");
-                        for off in (0..64).step_by(8) {
-                            let val: usize = mem_clone.read(ent_list + off).unwrap_or(0);
-                            info!("  +0x{:02X}: 0x{:016X}", off, val);
-                        }
-                        
-                        // Try reading chunk at offset +16 (standard)
-                        let chunk0: usize = mem_clone.read(ent_list + 16).unwrap_or(0);
-                        info!("--- Chunk[0] at ent_list+16 = 0x{:X} ---", chunk0);
-                        
-                        if chunk0 > 0x10000000000 {
-                            // Dump first 256 bytes of Chunk to understand structure
-                            info!("--- RAW DUMP of Chunk[0] (first 256 bytes) ---");
-                            for off in (0..256).step_by(8) {
-                                let val: usize = mem_clone.read(chunk0 + off).unwrap_or(0);
-                                let is_module = val >= 0x7FF000000000 && val < 0x800000000000;
-                                let is_heap = val > 0x10000000000 && val < 0x7FF000000000;
-                                let marker = if is_module { " [MODULE]" } else if is_heap { " [HEAP]" } else { "" };
-                                info!("  +0x{:03X}: 0x{:016X}{}", off, val, marker);
-                            }
-                            
-                            // The chunk might be directly array of pointers to entities
-                            // Try reading chunk[i] directly (stride=8) and check what we get
-                            info!("--- Testing direct pointer array (stride=8) ---");
-                            for i in 0..10 {
-                                let ptr: usize = mem_clone.read(chunk0 + 8 * i).unwrap_or(0);
-                                let is_heap = ptr > 0x10000000000 && ptr < 0x7FF000000000;
-                                
-                                if ptr != 0 {
-                                    info!("  chunk[{}] = 0x{:X} (heap: {})", i, ptr, is_heap);
-                                    
-                                    if is_heap {
-                                        // Try to read m_hPlayerPawn at various offsets
-                                        for pawn_off in [0x8FC, 0x7E4, 0x7E8, 0x7EC, 0x800] {
-                                            let pawn_h: u32 = mem_clone.read(ptr + pawn_off).unwrap_or(0);
-                                            if pawn_h != 0 && pawn_h != 0xFFFFFFFF && pawn_h < 0x10000 {
-                                                info!("    +0x{:X}: pawn_handle = 0x{:X}", pawn_off, pawn_h);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            info!("  Chunk[0] is NOT a heap pointer - structure may be different!");
-                        }
-                    } else {
-                        info!("EntityListPtr is NOT a heap pointer! Offsets are WRONG!");
-                    }
-                    info!("Entities found this frame: {}", st.entities.len());
-                    info!("===================");
+                    info!("Entities: {} | Local Team: {}", st.entities.len(), st.local_team);
                 }
-
-                    if ent_list != 0 {
+                if ent_list != 0 {
                     // CEntityIdentity stride = 0x70 (112 bytes), entity pointer at +0x00
-                    const STRIDE: usize = 0x70; // 112 bytes!
+                    const STRIDE: usize = 0x70;
                     
                     for i in 1..64 {
                         let list_entry: usize = mem_clone.read(ent_list + 8 * ((i & 0x7FFF) >> 9) + 16).unwrap_or(0);
                         if list_entry == 0 { continue; }
                         
-                        // Entity pointer is at the START of CEntityIdentity (offset 0)
                         let controller: usize = mem_clone.read(list_entry + STRIDE * (i & 0x1FF)).unwrap_or(0);
                         if controller == 0 || controller > 0x7FF000000000 { continue; }
                         
                         let pawn_h: u32 = mem_clone.read(controller + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
-
                         if pawn_h == 0 || pawn_h == 0xFFFFFFFF { continue; }
                         
                         let list_entry2: usize = mem_clone.read(ent_list + 8 * ((pawn_h as usize & 0x7FFF) >> 9) + 16).unwrap_or(0);
@@ -277,29 +209,9 @@ fn main() -> Result<()> {
                     let x = s_head.x - w / 2.0;
                     let y = s_head.y;
                     
-                    overlay.draw_box(x, y, w, h, is_enemy);
-
-                    // Skeleton
-                    let bones = &ent.bones;
-                    let pairs = [
-                        (6, 5), (5, 4), (4, 2), (2, 0), // Spine
-                        (5, 8), (8, 9), (9, 10), // R Arm
-                        (5, 13), (13, 14), (14, 15), // L Arm
-                        (0, 22), (22, 23), (23, 24), // R Leg
-                        (0, 25), (25, 26), (26, 27), // L Leg
-                    ];
-
-                    for (i1, i2) in pairs {
-                        let b1 = bones[i1];
-                        let b2 = bones[i2];
-                        if b1.length() > 0.0 && b2.length() > 0.0 {
-                             if let (Some(s1), Some(s2)) = (
-                                 game::math::w2s(&st.view_matrix, b1, overlay.width as f32, overlay.height as f32),
-                                 game::math::w2s(&st.view_matrix, b2, overlay.width as f32, overlay.height as f32)
-                             ) {
-                                 overlay.draw_line(s1.x, s1.y, s2.x, s2.y, is_enemy);
-                             }
-                        }
+                    // Draw box only (skeleton disabled for now)
+                    if h > 5.0 && h < 500.0 {
+                        overlay.draw_box(x, y, w, h, is_enemy);
                     }
                 }
             }
