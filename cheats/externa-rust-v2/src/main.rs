@@ -101,8 +101,8 @@ fn main() -> Result<()> {
                      let ent_list: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_entity_list).unwrap_or(0);
                      
                      if ent_list != 0 && pawn_h != 0 && pawn_h != 0xFFFFFFFF {
-                         // C++ formula: ((8 * (pawn_h & 0x7FFF)) >> 9) + 16
-                         let entry: usize = mem_clone.read(ent_list + ((8 * (pawn_h as usize & 0x7FFF)) >> 9) + 16).unwrap_or(0);
+                         // C++ formula for pawn: 8 * ((pawnHandle & 0x7FFF) >> 9) + 16
+                         let entry: usize = mem_clone.read(ent_list + 8 * ((pawn_h as usize & 0x7FFF) >> 9) + 16).unwrap_or(0);
                          if entry != 0 {
                              // Entity pointer at offset 0 in CEntityIdentity (stride = 112)
                              let pawn: usize = mem_clone.read(entry + STRIDE * (pawn_h as usize & 0x1FF)).unwrap_or(0);
@@ -150,8 +150,9 @@ fn main() -> Result<()> {
                         if pawn_h == 0 || pawn_h == 0xFFFFFFFF { continue; }
                         debug_stats.1 += 1;
                         
-                        // C++ formula for pawn
-                        let list_entry2: usize = mem_clone.read(ent_list + ((8 * (pawn_h as usize & 0x7FFF)) >> 9) + 16).unwrap_or(0);
+                        // C++ formula for pawn: 0x8 * ((pawnHandle & 0x7FFF) >> 9) + 16
+                        // Different from controller! First shift, then multiply
+                        let list_entry2: usize = mem_clone.read(ent_list + 8 * ((pawn_h as usize & 0x7FFF) >> 9) + 16).unwrap_or(0);
                         if list_entry2 == 0 { continue; }
                         
                         // Pawn pointer from CEntityIdentity
