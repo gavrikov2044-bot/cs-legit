@@ -10,7 +10,7 @@ use log::{info, error};
 
 use memory::Memory;
 use overlay::D3D11Overlay;
-use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_ELLIPSE, D2D_POINT_2F, D2D_RECT_F};
+use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D_RECT_F, D2D_POINT_2F};
 use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, SendInput, INPUT, INPUT_MOUSE, MOUSEINPUT, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, VIRTUAL_KEY};
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
@@ -203,12 +203,7 @@ fn main() -> anyhow::Result<()> {
                         target.DrawRectangle(&rect, brush, 1.5, None);
                     }
                     
-                    if settings_guard.show_head {
-                        brush.SetColor(&color);
-                        let head_pt = windows::Win32::Graphics::Direct2D::Common::D2D_POINT_2F { x: head.x, y: head.y + h*0.05 };
-                        let circle = windows::Win32::Graphics::Direct2D::Common::D2D_ELLIPSE { point: head_pt, radiusX: h*0.07, radiusY: h*0.07 };
-                        target.DrawEllipse(&circle, brush, 1.0, None);
-                    }
+                    // Head ESP removed (D2D1_ELLIPSE not available in windows 0.58)
 
                     if settings_guard.show_lines {
                         brush.SetColor(&D2D1_COLOR_F { r: 1.0, g: 1.0, b: 1.0, a: 0.5 });

@@ -14,8 +14,9 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_RENDER_TARGET_PROPERTIES,
     D2D1_DEBUG_LEVEL_NONE, D2D1_RENDER_TARGET_TYPE_DEFAULT,
     D2D1_RENDER_TARGET_USAGE_NONE, D2D1_FEATURE_LEVEL_DEFAULT,
+    D2D1_BRUSH_PROPERTIES,
 };
-use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT};
+use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT, D2D_MATRIX_3X2_F};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, RegisterClassExW, DefWindowProcW, ShowWindow,
     TranslateMessage, DispatchMessageW, PeekMessageW,
@@ -126,7 +127,18 @@ impl D3D11Overlay {
             };
 
             let d2d_target = factory.CreateDxgiSurfaceRenderTarget(&surface, &props)?;
-            let brush = d2d_target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, None)?;
+            
+            // Create a default brush (red)
+            let brush_props = D2D1_BRUSH_PROPERTIES {
+                opacity: 1.0,
+                transform: D2D_MATRIX_3X2_F {
+                    matrix: [[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]
+                },
+            };
+            let brush = d2d_target.CreateSolidColorBrush(
+                &D2D1_COLOR_F { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, 
+                Some(&brush_props)
+            )?;
 
             Ok(Self { hwnd, swap_chain, d2d_target, brush, factory })
         }
