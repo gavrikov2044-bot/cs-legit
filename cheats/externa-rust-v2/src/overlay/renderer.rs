@@ -1,7 +1,7 @@
 use anyhow::Result;
-use windows::core::{HSTRING, Interface};
+use windows::core::HSTRING;
 use windows::Win32::Foundation::{HWND, RECT};
-use windows::Win32::Graphics::Direct2D::{ID2D1RenderTarget, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
+use windows::Win32::Graphics::Direct2D::{ID2D1Factory, ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
     D2D1CreateFactory, D2D1_FACTORY_TYPE_SINGLE_THREADED,
     D2D1_RENDER_TARGET_PROPERTIES, D2D1_HWND_RENDER_TARGET_PROPERTIES,
     D2D1_PRESENT_OPTIONS_NONE, D2D1_DEBUG_LEVEL_NONE,
@@ -85,10 +85,9 @@ impl Direct2DOverlay {
 
             let target = factory.CreateHwndRenderTarget(&render_props, &hwnd_props)?;
             
-            // Create Brushes (cast target to ID2D1RenderTarget trait interface)
-            let render_target: ID2D1RenderTarget = target.cast()?;
-            let brush_enemy = render_target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, None)?;
-            let brush_team = render_target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, None)?;
+            // Create brushes directly on the HWND render target
+            let brush_enemy = target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, None)?;
+            let brush_team = target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, None)?;
 
             Ok(Self { hwnd, factory, target, brush_enemy, brush_team, width, height })
         }
