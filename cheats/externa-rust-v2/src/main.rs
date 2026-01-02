@@ -45,8 +45,8 @@ fn main() -> Result<()> {
     // 3. Pattern Scan
     info!("Scanning patterns...");
     let patterns = vec![
-        memory::scanner::Pattern::new("EntityList", "4C 8B 0D ? ? ? ? 8B 97", 3, 7),
-        memory::scanner::Pattern::new("LocalController", "48 83 3D ? ? ? ? ? 0F 95", 3, 7),
+        memory::scanner::Pattern::new("EntityList", "48 8B 0D ? ? ? ? 48 89 7C 24", 3, 7),
+        memory::scanner::Pattern::new("LocalController", "48 83 3D ? ? ? ? ? 0F 95", 3, 8),
         memory::scanner::Pattern::new("ViewMatrix", "48 8D 0D ? ? ? ? 48 C1 E0 06", 3, 7),
     ];
     
@@ -71,6 +71,7 @@ fn main() -> Result<()> {
     
     thread::spawn(move || {
         info!("Memory thread started.");
+        let mut last_debug = std::time::Instant::now();
         loop {
             if let Ok(mut st) = state_clone.lock() {
                 // Read Matrix
@@ -100,6 +101,13 @@ fn main() -> Result<()> {
                 // Read Entities
                 st.entities.clear();
                 let ent_list: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_entity_list).unwrap_or(0);
+                
+                if last_debug.elapsed().as_secs() >= 5 {
+                    let local_ptr = mem_clone.read(mem_clone.client_base + offsets_clone.dw_local_player_controller).unwrap_or(0);
+                    info!("DEBUG: EntityListPtr=0x{:X} LocalCtrlPtr=0x{:X} Entities={}", ent_list, local_ptr, st.entities.len());
+                    last_debug = std::time::Instant::now();
+                }
+
                 if ent_list != 0 {
                     for i in 1..64 {
                         let list_entry: usize = mem_clone.read(ent_list + 8 * ((i & 0x7FFF) >> 9) + 16).unwrap_or(0);
@@ -155,9 +163,7 @@ fn main() -> Result<()> {
 
     // 6. Overlay Loop
     let overlay = overlay::renderer::Direct2DOverlay::new()?;
-    info!("Overlay initialized (Direct2D). Window size: {}x{}", overlay.width, overlay.height);
-
-    let mut last_log = std::time::Instant::now();
+    info!("Overlay initialized (Direct2D). Window size: {}x{} | [ESP ONLY - NO MENU]", overlay.width, overlay.height);
 
     loop {
         if !overlay.handle_message() { break; }
@@ -165,11 +171,6 @@ fn main() -> Result<()> {
         overlay.begin_scene();
         
         if let Ok(st) = state.lock() {
-            if last_log.elapsed().as_secs() >= 5 {
-                info!("Entities in loop: {} | Local Team: {}", st.entities.len(), st.local_team);
-                last_log = std::time::Instant::now();
-            }
-
             for ent in &st.entities {
                 if ent.team == st.local_team { continue; } // Skip teammates
                 
