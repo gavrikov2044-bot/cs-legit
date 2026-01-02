@@ -25,6 +25,7 @@ windows = { version = "0.59", features = [
     "Win32_System_Com",
     "Foundation_Numerics",
     "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Imaging",
 ] }
 
 # Math
