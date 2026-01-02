@@ -7,7 +7,7 @@ use windows::Win32::Graphics::Direct2D::{ID2D1RenderTarget, ID2D1Factory, ID2D1H
     D2D1_FACTORY_OPTIONS,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
-use windows::Win32::Graphics::Direct2D::Common::{D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT, D2D1_COLOR_F}; // ADDED IMPORTS
+use windows::Win32::Graphics::Direct2D::Common::{D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT, D2D1_COLOR_F, D2D_SIZE_U}; // Added D2D_SIZE_U
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClientRect, CreateWindowExW, RegisterClassExW, DefWindowProcW, ShowWindow,
     WS_EX_TOPMOST, WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_EX_NOACTIVATE, WS_POPUP, WS_VISIBLE,
@@ -78,7 +78,7 @@ impl Direct2DOverlay {
             };
             let hwnd_props = D2D1_HWND_RENDER_TARGET_PROPERTIES {
                 hwnd,
-                pixelSize: SIZE { cx: width as i32, cy: height as i32 }, // Use SIZE instead of D2D1_SIZE_U
+                pixelSize: D2D_SIZE_U { width, height }, // Use D2D_SIZE_U
                 presentOptions: D2D1_PRESENT_OPTIONS_NONE,
             };
 
@@ -86,9 +86,9 @@ impl Direct2DOverlay {
             
             // Create Brushes (cast target to ID2D1RenderTarget trait interface)
             let render_target: ID2D1RenderTarget = target.cast()?;
-            // Call method on the interface directly (no static call needed, just method call)
-            let brush_enemy = render_target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, None)?;
-            let brush_team = render_target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, None)?;
+            // Call method on the interface directly (via trait)
+            let brush_enemy = ID2D1RenderTarget::CreateSolidColorBrush(&render_target, &D2D1_COLOR_F { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, None)?;
+            let brush_team = ID2D1RenderTarget::CreateSolidColorBrush(&render_target, &D2D1_COLOR_F { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, None)?;
 
             Ok(Self { hwnd, factory, target, brush_enemy, brush_team, width, height })
         }
