@@ -1,35 +1,41 @@
 use std::ffi::c_void;
 use std::mem::size_of;
+use std::sync::Arc;
 use windows::Win32::Foundation::{HANDLE, CloseHandle};
 use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_VM_READ, PROCESS_QUERY_INFORMATION};
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, 
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW,
     Module32FirstW, Module32NextW,
     TH32CS_SNAPPROCESS, TH32CS_SNAPMODULE, PROCESSENTRY32W, MODULEENTRY32W,
 };
 
-#[path = "syscall.rs"]
 mod syscall;
 
+// Wrapper for Send+Sync
+struct SendHandle(HANDLE);
+unsafe impl Send for SendHandle {}
+unsafe impl Sync for SendHandle {}
+
 pub struct Memory {
-    handle: HANDLE,
+    handle: Arc<SendHandle>,
     pub client_base: u64,
 }
 
 impl Memory {
     pub fn new(process_name: &str) -> Option<Self> {
-        // Init syscalls
         syscall::init();
-        
+
         let pid = Self::get_pid(process_name)?;
         let handle = unsafe { OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, false, pid).ok()? };
         let client_base = Self::get_module_base(pid, "client.dll")?;
-        
-        Some(Self { handle, client_base })
+
+        Some(Self {
+            handle: Arc::new(SendHandle(handle)),
+            client_base
+        })
     }
 
-    // ... (get_pid, get_module_base logic same as before) ...
     fn get_pid(name: &str) -> Option<u32> {
         unsafe {
             let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
@@ -65,11 +71,11 @@ impl Memory {
     pub fn read<T: Copy>(&self, address: u64) -> T {
         unsafe {
             let mut buffer = std::mem::zeroed::<T>();
-            
-            // Try Syscall first
+
+            // Try Syscall
             if syscall::is_active() {
                 let status = syscall::nt_read(
-                    self.handle.0 as _,
+                    self.handle.0.0 as _,
                     address as _,
                     &mut buffer as *mut _ as *mut _,
                     size_of::<T>()
@@ -77,9 +83,9 @@ impl Memory {
                 if status == 0 { return buffer; }
             }
 
-            // Fallback to WinAPI
+            // Fallback WinAPI
             let _ = ReadProcessMemory(
-                self.handle,
+                self.handle.0,
                 address as *const c_void,
                 &mut buffer as *mut _ as *mut c_void,
                 size_of::<T>(),
@@ -92,7 +98,9 @@ impl Memory {
 
 impl Drop for Memory {
     fn drop(&mut self) {
-        unsafe { let _ = CloseHandle(self.handle); }
+        // Only drop if last reference
+        if Arc::strong_count(&self.handle) == 1 {
+            unsafe { let _ = CloseHandle(self.handle.0); }
+        }
     }
 }
-

@@ -1,42 +1,40 @@
-use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use windows::core::{Interface, w, Result, PCWSTR};
-use windows::Win32::Foundation::{HWND, RECT, BOOL, LPARAM, WPARAM, LRESULT};
-use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_SWAP_CHAIN_DESC, DXGI_SWAP_EFFECT_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGISurface, DXGI_PRESENT};
-use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_MODE_DESC, DXGI_RATIONAL};
+use std::time::Instant;
+use windows::core::{w, Result};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11CreateDeviceAndSwapChain, ID3D11Device, ID3D11DeviceContext,
-    D3D11_SDK_VERSION, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+    ID3D11RenderTargetView, D3D11_SDK_VERSION, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
 };
-use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
-use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Factory, ID2D1RenderTarget, ID2D1SolidColorBrush,
-    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_RENDER_TARGET_PROPERTIES,
-    D2D1_DEBUG_LEVEL_NONE, D2D1_RENDER_TARGET_TYPE_DEFAULT,
-    D2D1_RENDER_TARGET_USAGE_NONE, D2D1_FEATURE_LEVEL_DEFAULT,
-    D2D1_BRUSH_PROPERTIES,
-};
-use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT, D2D_MATRIX_3X2_F};
+use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_SWAP_CHAIN_DESC, DXGI_SWAP_EFFECT_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT};
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_MODE_DESC, DXGI_RATIONAL};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, RegisterClassExW, DefWindowProcW, ShowWindow,
-    TranslateMessage, DispatchMessageW, PeekMessageW,
-    WS_EX_TOPMOST, WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE, 
+    TranslateMessage, DispatchMessageW, PeekMessageW, SetLayeredWindowAttributes,
+    WS_EX_TOPMOST, WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
     PM_REMOVE, WM_QUIT, WNDCLASSEXW, CS_HREDRAW, CS_VREDRAW, MSG,
-    SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE,
+    LWA_ALPHA, SW_SHOWDEFAULT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::Graphics::Dwm::{DwmExtendFrameIntoClientArea};
+use windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
 use windows::Win32::UI::Controls::MARGINS;
 
-pub struct D3D11Overlay {
-    hwnd: HWND,
-    swap_chain: IDXGISwapChain,
-    d2d_target: ID2D1RenderTarget,
-    brush: ID2D1SolidColorBrush,
-    factory: ID2D1Factory,
-}
+use imgui::*;
+use imgui_dx11_renderer::Renderer;
 
-static RUNNING: AtomicBool = AtomicBool::new(true);
+pub static RUNNING: AtomicBool = AtomicBool::new(true);
+
+pub struct ImGuiOverlay {
+    hwnd: HWND,
+    device: ID3D11Device,
+    context: ID3D11DeviceContext,
+    swap_chain: IDXGISwapChain,
+    render_target: ID3D11RenderTargetView,
+    imgui: Context,
+    renderer: Renderer,
+    last_frame: Instant,
+}
 
 unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if msg == WM_QUIT {
@@ -45,17 +43,17 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
     DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
-impl D3D11Overlay {
+impl ImGuiOverlay {
     pub fn new() -> Result<Self> {
         unsafe {
-            let instance = GetModuleHandleW(None)?;
-            let class_name = w!("ExternaOverlayV2");
-            
+            let instance = GetModuleHandleW(None)?.into();
+            let class_name = w!("ExternaImGui");
+
             let wc = WNDCLASSEXW {
                 cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
                 style: CS_HREDRAW | CS_VREDRAW,
                 lpfnWndProc: Some(wnd_proc),
-                hInstance: instance.into(),
+                hInstance: instance,
                 lpszClassName: class_name,
                 ..Default::default()
             };
@@ -64,16 +62,18 @@ impl D3D11Overlay {
             let hwnd = CreateWindowExW(
                 WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT,
                 class_name,
-                w!("Externa Overlay"),
+                w!("Externa"),
                 WS_POPUP | WS_VISIBLE,
                 0, 0, 1920, 1080,
                 None, None, instance, None
             )?;
-            
+
+            SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA)?;
+
             let margins = MARGINS { cxLeftWidth: -1, cxRightWidth: -1, cyTopHeight: -1, cyBottomHeight: -1 };
             let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
-            let _ = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
 
+            // D3D11
             let sc_desc = DXGI_SWAP_CHAIN_DESC {
                 BufferDesc: DXGI_MODE_DESC {
                     Width: 1920,
@@ -86,19 +86,19 @@ impl D3D11Overlay {
                 BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
                 BufferCount: 1,
                 OutputWindow: hwnd,
-                Windowed: BOOL(1),
+                Windowed: true.into(),
                 SwapEffect: DXGI_SWAP_EFFECT_DISCARD,
                 Flags: 0,
             };
 
-            let mut device: Option<ID3D11Device> = None;
-            let mut context: Option<ID3D11DeviceContext> = None;
-            let mut swap_chain: Option<IDXGISwapChain> = None;
-            
+            let mut device = None;
+            let mut context = None;
+            let mut swap_chain = None;
+
             D3D11CreateDeviceAndSwapChain(
                 None,
                 D3D_DRIVER_TYPE_HARDWARE,
-                None,
+                windows::Win32::Foundation::HMODULE(0),
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                 None,
                 D3D11_SDK_VERSION,
@@ -106,64 +106,76 @@ impl D3D11Overlay {
                 Some(&mut swap_chain),
                 Some(&mut device),
                 None,
-                Some(&mut context)
+                Some(&mut context),
             )?;
 
+            let device = device.unwrap();
+            let context = context.unwrap();
             let swap_chain = swap_chain.unwrap();
 
-            let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
-            let surface: IDXGISurface = swap_chain.GetBuffer(0)?;
-            
-            let props = D2D1_RENDER_TARGET_PROPERTIES {
-                r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
-                pixelFormat: D2D1_PIXEL_FORMAT {
-                    format: DXGI_FORMAT_R8G8B8A8_UNORM,
-                    alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
-                },
-                dpiX: 0.0,
-                dpiY: 0.0,
-                usage: D2D1_RENDER_TARGET_USAGE_NONE,
-                minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
-            };
+            let back_buffer: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D = swap_chain.GetBuffer(0)?;
+            let render_target = device.CreateRenderTargetView(&back_buffer, None)?;
 
-            let d2d_target = factory.CreateDxgiSurfaceRenderTarget(&surface, &props)?;
-            
-            // Create a default brush (red)
-            let brush_props = D2D1_BRUSH_PROPERTIES {
-                opacity: 1.0,
-                transform: D2D_MATRIX_3X2_F {
-                    matrix: [[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]
-                },
-            };
-            let brush = d2d_target.CreateSolidColorBrush(
-                &D2D1_COLOR_F { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, 
-                Some(&brush_props)
-            )?;
+            // ImGui
+            let mut imgui = Context::create();
+            imgui.set_ini_filename(None);
 
-            Ok(Self { hwnd, swap_chain, d2d_target, brush, factory })
+            let renderer = Renderer::new(&mut imgui, &device)?;
+
+            ShowWindow(hwnd, SW_SHOWDEFAULT);
+
+            Ok(Self {
+                hwnd,
+                device,
+                context,
+                swap_chain,
+                render_target,
+                imgui,
+                renderer,
+                last_frame: Instant::now(),
+            })
         }
     }
 
-    pub fn render_loop<F>(&self, mut draw_fn: F) 
-    where F: FnMut(&ID2D1RenderTarget, &ID2D1SolidColorBrush) 
+    pub fn render_frame<F>(&mut self, mut draw_fn: F)
+    where F: FnMut(&Ui)
     {
+        let now = Instant::now();
+        let delta = now - self.last_frame;
+        self.last_frame = now;
+
+        let ui = self.imgui.frame();
+        draw_fn(&ui);
+
         unsafe {
-            let mut msg = MSG::default();
-            while RUNNING.load(Ordering::Relaxed) {
-                if PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                    if msg.message == WM_QUIT { break; }
+            self.context.OMSetRenderTargets(Some(&[Some(self.render_target.clone())]), None);
+            let clear = [0.0f32, 0.0, 0.0, 0.0];
+            self.context.ClearRenderTargetView(&self.render_target, &clear);
+
+            self.renderer.render(ui.render()).ok();
+            let _ = self.swap_chain.Present(1, 0);
+        }
+    }
+
+    pub fn run<F>(&mut self, mut update_fn: F)
+    where F: FnMut(&Ui)
+    {
+        let mut msg = MSG::default();
+
+        while RUNNING.load(Ordering::Relaxed) {
+            unsafe {
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    if msg.message == WM_QUIT {
+                        RUNNING.store(false, Ordering::Relaxed);
+                        return;
+                    }
                     TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
-
-                self.d2d_target.BeginDraw();
-                self.d2d_target.Clear(Some(&D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }));
-
-                draw_fn(&self.d2d_target, &self.brush);
-
-                let _ = self.d2d_target.EndDraw(None, None);
-                let _ = self.swap_chain.Present(1, DXGI_PRESENT(0));
             }
+
+            self.render_frame(&mut update_fn);
+            std::thread::sleep(std::time::Duration::from_millis(8));
         }
     }
 }
