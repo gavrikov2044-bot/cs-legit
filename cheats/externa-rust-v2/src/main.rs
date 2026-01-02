@@ -93,15 +93,18 @@ fn main() -> Result<()> {
                 // Read Local Player
                 let mut local_team = 0;
                 let local_ctrl: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_local_player_controller).unwrap_or(0);
+                // CEntityIdentity stride = 0x70 (112 bytes)
+                const STRIDE: usize = 0x70;
+                
                 if local_ctrl != 0 && local_ctrl < 0x7FF000000000 {
                      let pawn_h: u32 = mem_clone.read(local_ctrl + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
                      let ent_list: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_entity_list).unwrap_or(0);
                      
                      if ent_list != 0 && pawn_h != 0 && pawn_h != 0xFFFFFFFF {
                          let entry: usize = mem_clone.read(ent_list + 8 * ((pawn_h as usize & 0x7FFF) >> 9) + 16).unwrap_or(0);
-                        if entry != 0 {
-                             // CEntityIdentity: stride=120, entity pointer at +0x08
-                             let pawn: usize = mem_clone.read(entry + 120 * (pawn_h as usize & 0x1FF) + 8).unwrap_or(0);
+                         if entry != 0 {
+                             // Entity pointer at offset 0 in CEntityIdentity
+                             let pawn: usize = mem_clone.read(entry + STRIDE * (pawn_h as usize & 0x1FF)).unwrap_or(0);
                              if pawn != 0 && pawn < 0x7FF000000000 {
                                  local_team = mem_clone.read(pawn + game::offsets::netvars::M_I_TEAM_NUM).unwrap_or(0);
                              }
@@ -186,13 +189,16 @@ fn main() -> Result<()> {
                 }
 
                     if ent_list != 0 {
+                    // CEntityIdentity stride = 0x70 (112 bytes), entity pointer at +0x00
+                    const STRIDE: usize = 0x70; // 112 bytes!
+                    
                     for i in 1..64 {
                         let list_entry: usize = mem_clone.read(ent_list + 8 * ((i & 0x7FFF) >> 9) + 16).unwrap_or(0);
                         if list_entry == 0 { continue; }
                         
-                        // CEntityIdentity: stride=120, entity pointer at +0x08
-                        let controller: usize = mem_clone.read(list_entry + 120 * (i & 0x1FF) + 8).unwrap_or(0);
-                        if controller == 0 || controller > 0x7FF000000000 { continue; } // Skip module addresses
+                        // Entity pointer is at the START of CEntityIdentity (offset 0)
+                        let controller: usize = mem_clone.read(list_entry + STRIDE * (i & 0x1FF)).unwrap_or(0);
+                        if controller == 0 || controller > 0x7FF000000000 { continue; }
                         
                         let pawn_h: u32 = mem_clone.read(controller + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
 
@@ -201,8 +207,8 @@ fn main() -> Result<()> {
                         let list_entry2: usize = mem_clone.read(ent_list + 8 * ((pawn_h as usize & 0x7FFF) >> 9) + 16).unwrap_or(0);
                         if list_entry2 == 0 { continue; }
                         
-                        // CEntityIdentity: stride=120, entity pointer at +0x08
-                        let pawn: usize = mem_clone.read(list_entry2 + 120 * (pawn_h as usize & 0x1FF) + 8).unwrap_or(0);
+                        // Pawn pointer from CEntityIdentity
+                        let pawn: usize = mem_clone.read(list_entry2 + STRIDE * (pawn_h as usize & 0x1FF)).unwrap_or(0);
                         if pawn == 0 || pawn > 0x7FF000000000 { continue; }
 
                         // Health check
