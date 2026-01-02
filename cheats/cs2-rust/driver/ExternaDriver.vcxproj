@@ -31,10 +31,9 @@
 
   <PropertyGroup>
     <NMakeBuildCommandLine>cargo +nightly build --release -Z build-std=core,alloc --target x86_64-pc-windows-msvc</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>cargo +nightly build --release -Z build-std=core,alloc --target x86_64-pc-windows-msvc</NMakeReBuildCommandLine>
+    <NMakeReBuildCommandLine>cargo clean &amp;&amp; cargo +nightly build --release -Z build-std=core,alloc --target x86_64-pc-windows-msvc</NMakeReBuildCommandLine>
     <NMakeCleanCommandLine>cargo clean</NMakeCleanCommandLine>
     <NMakeOutput>target\x86_64-pc-windows-msvc\release\externa_driver.sys</NMakeOutput>
-    <NMakePreprocessorDefinitions>WIN32;_DEBUG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
     <OutDir>$(ProjectDir)target\x86_64-pc-windows-msvc\release\</OutDir>
     <IntDir>$(ProjectDir)target\</IntDir>
   </PropertyGroup>
@@ -49,18 +48,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ClInclude Include="src\*.rs">
-      <FileType>Document</FileType>
-    </ClInclude>
-  </ItemGroup>
-
-  <ItemGroup>
-    <Text Include="src\lib.rs" />
-    <Text Include="src\memory.rs" />
-    <Text Include="src\process.rs" />
-    <Text Include="src\communication.rs" />
+    <None Include="src\lib.rs" />
+    <None Include="src\memory.rs" />
+    <None Include="src\process.rs" />
+    <None Include="src\communication.rs" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
-
