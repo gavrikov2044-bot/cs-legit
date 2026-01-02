@@ -15,7 +15,7 @@ use windows::Win32::Graphics::Direct2D::Common::{D2D1_ALPHA_MODE_PREMULTIPLIED, 
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, RegisterClassExW, DefWindowProcW, ShowWindow,
     WS_EX_TOPMOST, WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_EX_NOACTIVATE, WS_POPUP, WS_VISIBLE,
-    WNDCLASSEXW, CS_HREDRAW, CS_VREDRAW, SW_SHOWDEFAULT, SetLayeredWindowAttributes, LWA_ALPHA,
+    WNDCLASSEXW, CS_HREDRAW, CS_VREDRAW, SW_SHOWDEFAULT, SetLayeredWindowAttributes, LWA_ALPHA, LWA_COLORKEY,
     PeekMessageW, TranslateMessage, DispatchMessageW, PM_REMOVE, MSG,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -65,7 +65,8 @@ impl Direct2DOverlay {
                 None, None, Some(instance.into()), None
             )?;
 
-            SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA)?;
+            // Use LWA_COLORKEY to make black (0,0,0) pixels transparent
+            SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 0, LWA_COLORKEY)?;
             ShowWindow(hwnd, SW_SHOWDEFAULT);
 
             // Init D2D

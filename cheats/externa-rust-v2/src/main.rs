@@ -157,12 +157,19 @@ fn main() -> Result<()> {
     let overlay = overlay::renderer::Direct2DOverlay::new()?;
     info!("Overlay initialized (Direct2D). Window size: {}x{}", overlay.width, overlay.height);
 
+    let mut last_log = std::time::Instant::now();
+
     loop {
         if !overlay.handle_message() { break; }
         
         overlay.begin_scene();
         
         if let Ok(st) = state.lock() {
+            if last_log.elapsed().as_secs() >= 5 {
+                info!("Entities in loop: {} | Local Team: {}", st.entities.len(), st.local_team);
+                last_log = std::time::Instant::now();
+            }
+
             for ent in &st.entities {
                 if ent.team == st.local_team { continue; } // Skip teammates
                 
