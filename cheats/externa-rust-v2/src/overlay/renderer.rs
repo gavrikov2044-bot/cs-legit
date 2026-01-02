@@ -5,6 +5,7 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, D2D1_FACTORY_TYPE_SINGLE_THREADED,
     D2D1_RENDER_TARGET_PROPERTIES, D2D1_HWND_RENDER_TARGET_PROPERTIES,
     D2D1_SIZE_U, D2D1_PRESENT_OPTIONS_NONE, D2D1_PIXEL_FORMAT, D2D1_DEBUG_LEVEL_NONE,
+    D2D1_FACTORY_OPTIONS, // ADDED
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Direct2D::Common::D2D1_ALPHA_MODE_PREMULTIPLIED;
@@ -44,7 +45,7 @@ impl Direct2DOverlay {
                 style: CS_HREDRAW | CS_VREDRAW,
                 lpfnWndProc: Some(wnd_proc),
                 hInstance: instance.into(),
-                lpszClassName: class_name.clone(),
+                lpszClassName: windows::core::PCWSTR::from_raw(class_name.as_ptr()),
                 ..Default::default()
             };
             RegisterClassExW(&wc);
@@ -61,11 +62,12 @@ impl Direct2DOverlay {
                 None, None, Some(instance.into()), None
             )?;
 
-            SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)?;
+            SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA)?;
             ShowWindow(hwnd, SW_SHOWDEFAULT);
 
             // Init D2D
-            let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, Some(&D2D1_DEBUG_LEVEL_NONE))?;
+            let factory_options = D2D1_FACTORY_OPTIONS { debugLevel: D2D1_DEBUG_LEVEL_NONE };
+            let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, Some(&factory_options))?;
             
             let rc = RECT { left: 0, top: 0, right: width as i32, bottom: height as i32 };
             let render_props = D2D1_RENDER_TARGET_PROPERTIES {

@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::Result;
 use glam::Vec3;
 use log::{info, error};
-use memory::ProcessReader;
+use crate::memory::handle::ProcessReader; // This is now correctly imported from the trait definition
 
 // Global Game State
 struct GameState {
