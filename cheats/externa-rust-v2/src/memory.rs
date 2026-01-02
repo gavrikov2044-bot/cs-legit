@@ -9,6 +9,9 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
     TH32CS_SNAPPROCESS, TH32CS_SNAPMODULE, PROCESSENTRY32W, MODULEENTRY32W,
 };
 
+#[path = "syscall.rs"]
+mod syscall;
+
 pub struct Memory {
     handle: HANDLE,
     pub client_base: u64,
@@ -16,6 +19,9 @@ pub struct Memory {
 
 impl Memory {
     pub fn new(process_name: &str) -> Option<Self> {
+        // Init syscalls
+        syscall::init();
+        
         let pid = Self::get_pid(process_name)?;
         let handle = unsafe { OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, false, pid).ok()? };
         let client_base = Self::get_module_base(pid, "client.dll")?;
@@ -23,21 +29,15 @@ impl Memory {
         Some(Self { handle, client_base })
     }
 
+    // ... (get_pid, get_module_base logic same as before) ...
     fn get_pid(name: &str) -> Option<u32> {
         unsafe {
             let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
             let mut entry = PROCESSENTRY32W { dwSize: size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
-            
             if Process32FirstW(snapshot, &mut entry).is_ok() {
                 loop {
-                    let process_name = String::from_utf16_lossy(&entry.szExeFile)
-                        .trim_matches('\0')
-                        .to_string();
-                        
-                    if process_name == name {
-                        let _ = CloseHandle(snapshot);
-                        return Some(entry.th32ProcessID);
-                    }
+                    let process_name = String::from_utf16_lossy(&entry.szExeFile).trim_matches('\0').to_string();
+                    if process_name == name { let _ = CloseHandle(snapshot); return Some(entry.th32ProcessID); }
                     if Process32NextW(snapshot, &mut entry).is_err() { break; }
                 }
             }
@@ -50,17 +50,10 @@ impl Memory {
         unsafe {
             let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE, pid).ok()?;
             let mut entry = MODULEENTRY32W { dwSize: size_of::<MODULEENTRY32W>() as u32, ..Default::default() };
-
             if Module32FirstW(snapshot, &mut entry).is_ok() {
                 loop {
-                    let module_name = String::from_utf16_lossy(&entry.szModule)
-                        .trim_matches('\0')
-                        .to_string();
-
-                    if module_name == name {
-                        let _ = CloseHandle(snapshot);
-                        return Some(entry.modBaseAddr as u64);
-                    }
+                    let module_name = String::from_utf16_lossy(&entry.szModule).trim_matches('\0').to_string();
+                    if module_name == name { let _ = CloseHandle(snapshot); return Some(entry.modBaseAddr as u64); }
                     if Module32NextW(snapshot, &mut entry).is_err() { break; }
                 }
             }
@@ -72,6 +65,19 @@ impl Memory {
     pub fn read<T: Copy>(&self, address: u64) -> T {
         unsafe {
             let mut buffer = std::mem::zeroed::<T>();
+            
+            // Try Syscall first
+            if syscall::is_active() {
+                let status = syscall::nt_read(
+                    self.handle.0 as _,
+                    address as _,
+                    &mut buffer as *mut _ as *mut _,
+                    size_of::<T>()
+                );
+                if status == 0 { return buffer; }
+            }
+
+            // Fallback to WinAPI
             let _ = ReadProcessMemory(
                 self.handle,
                 address as *const c_void,
