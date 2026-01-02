@@ -86,8 +86,10 @@ impl Direct2DOverlay {
             let target = factory.CreateHwndRenderTarget(&render_props, &hwnd_props)?;
             
             // Create brushes directly on the HWND render target
-            let brush_enemy = target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, None)?;
-            let brush_team = target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, None)?;
+            // Cast to ID2D1RenderTarget interface to access CreateSolidColorBrush
+            let render_target: ID2D1RenderTarget = target.cast()?;
+            let brush_enemy = render_target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, None)?;
+            let brush_team = render_target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, None)?;
 
             Ok(Self { hwnd, factory, target, brush_enemy, brush_team, width, height })
         }
