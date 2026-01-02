@@ -1,13 +1,14 @@
 use anyhow::Result;
-use windows::core::HSTRING;
+use windows::core::{Result, HSTRING, Interface};
 use windows::Win32::Foundation::{HWND, RECT};
-use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget;
 use windows::Win32::Graphics::Direct2D::{ID2D1Factory, ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
     D2D1CreateFactory, D2D1_FACTORY_TYPE_SINGLE_THREADED,
     D2D1_RENDER_TARGET_PROPERTIES, D2D1_HWND_RENDER_TARGET_PROPERTIES,
     D2D1_PRESENT_OPTIONS_NONE, D2D1_DEBUG_LEVEL_NONE,
     D2D1_FACTORY_OPTIONS,
 };
+use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget_Impl; // Import traits explicitly for method availability
+
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Direct2D::Common::{D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT, D2D1_COLOR_F, D2D_SIZE_U}; // Added D2D_SIZE_U
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -86,11 +87,9 @@ impl Direct2DOverlay {
 
             let target = factory.CreateHwndRenderTarget(&render_props, &hwnd_props)?;
             
-            // Create brushes directly on the HWND render target
-            // Cast to ID2D1RenderTarget interface to access CreateSolidColorBrush
-            let render_target: ID2D1RenderTarget = target.cast()?;
-            let brush_enemy = render_target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, None)?;
-            let brush_team = render_target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, None)?;
+            // ID2D1HwndRenderTarget implements ID2D1RenderTarget via Deref or Trait, so we can use methods directly if trait is imported
+            let brush_enemy = target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, None)?;
+            let brush_team = target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, None)?;
 
             Ok(Self { hwnd, factory, target, brush_enemy, brush_team, width, height })
         }
