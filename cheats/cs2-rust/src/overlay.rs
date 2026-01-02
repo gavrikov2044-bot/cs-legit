@@ -1,23 +1,32 @@
-//! Overlay window module
-//! Based on Valthrun overlay architecture
-//! Features: Stream-Proof, Transparent, Click-Through
+//! D3D11 Overlay
+//! Based on C++ version architecture
 
 use std::sync::Arc;
 use std::mem;
+use std::ptr;
 
-use anyhow::Result;
-use windows::core::w;
+use anyhow::{Result, anyhow};
+use windows::core::{w, Interface};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM, RECT, BOOL};
-use windows::Win32::Graphics::Gdi::{
-    CreateSolidBrush, CreatePen, SelectObject, DeleteObject,
-    Rectangle, FillRect, SetBkMode, TRANSPARENT, SetTextColor,
-    GetDC, ReleaseDC, InvalidateRect, CreateFontW, DrawTextW, UpdateWindow,
-    PS_SOLID, GetStockObject, NULL_BRUSH, HRGN, HGDIOBJ, DT_CENTER, DT_VCENTER, DT_SINGLELINE,
-    FW_BOLD, FONT_CHARSET, FONT_OUTPUT_PRECISION, FONT_CLIP_PRECISION, FONT_QUALITY,
-};
+use windows::Win32::Graphics::Gdi::UpdateWindow;
 use windows::Win32::Graphics::Dwm::{
-    DwmExtendFrameIntoClientArea, DwmEnableBlurBehindWindow, DwmIsCompositionEnabled,
-    DWM_BLURBEHIND, DWM_BB_ENABLE,
+    DwmExtendFrameIntoClientArea, DwmEnableBlurBehindWindow,
+    DWM_BLURBEHIND, DWM_BB_ENABLE, HRGN,
+};
+use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
+use windows::Win32::Graphics::Direct3D11::{
+    D3D11CreateDeviceAndSwapChain, ID3D11Device, ID3D11DeviceContext,
+    ID3D11RenderTargetView, ID3D11Texture2D,
+    D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
+};
+use windows::Win32::Graphics::Dxgi::{
+    IDXGISwapChain, DXGI_SWAP_CHAIN_DESC, DXGI_MODE_DESC,
+    DXGI_SAMPLE_DESC, DXGI_USAGE_RENDER_TARGET_OUTPUT,
+    DXGI_SWAP_EFFECT_DISCARD,
+};
+use windows::Win32::Graphics::Dxgi::Common::{
+    DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED,
+    DXGI_MODE_SCALING_UNSPECIFIED,
 };
 use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -25,44 +34,47 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ShowWindow, TranslateMessage, DispatchMessageW,
     GetSystemMetrics, GetWindowLongPtrW, SetWindowLongPtrW,
     SetForegroundWindow, PeekMessageW, SetWindowPos, SetWindowDisplayAffinity,
-    WNDCLASSEXW, MSG, 
-    WS_POPUP, WS_VISIBLE, WS_CLIPSIBLINGS,
-    WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE, WS_EX_LAYERED,
-    WM_DESTROY, WM_NCHITTEST, WM_ERASEBKGND,
+    WNDCLASSEXW, MSG,
+    WS_POPUP, WS_VISIBLE,
+    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE, WS_EX_LAYERED,
+    WM_DESTROY, WM_NCHITTEST,
     SW_SHOWNOACTIVATE, HTTRANSPARENT, SM_CXSCREEN, SM_CYSCREEN,
     GWL_EXSTYLE, PM_REMOVE, HWND_TOPMOST,
     SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE,
     CS_HREDRAW, CS_VREDRAW,
     WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
+    SetLayeredWindowAttributes, LWA_ALPHA,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 
-use crate::{SharedState, RUNNING};
-use crate::esp::{generate_esp_commands, DrawCommand, Color};
+use crate::{SharedState, RUNNING, Settings};
+use crate::esp::EspData;
 
-/// Overlay window
+/// D3D11 Overlay
 pub struct Overlay {
     hwnd: HWND,
     width: i32,
     height: i32,
     state: Arc<SharedState>,
-    stream_proof_enabled: bool,
+    
+    // D3D11
+    device: ID3D11Device,
+    context: ID3D11DeviceContext,
+    swapchain: IDXGISwapChain,
+    render_target: ID3D11RenderTargetView,
 }
 
-// Store state pointer for WndProc
 static mut OVERLAY_STATE: Option<*const SharedState> = None;
 
 impl Overlay {
-    /// Create overlay window (Valthrun-style)
     pub fn create(state: Arc<SharedState>) -> Result<Self> {
         let width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
         let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
         
-        unsafe {
-            OVERLAY_STATE = Some(Arc::as_ptr(&state));
-        }
+        unsafe { OVERLAY_STATE = Some(Arc::as_ptr(&state)); }
         
-        let class_name = w!("ExternaOverlayRust");
+        // Create window
+        let class_name = w!("ExternaD3D11");
         
         let wc = WNDCLASSEXW {
             cbSize: mem::size_of::<WNDCLASSEXW>() as u32,
@@ -77,22 +89,27 @@ impl Overlay {
         
         let hwnd = unsafe {
             CreateWindowExW(
-                WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+                WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
                 class_name,
                 w!(""),
-                WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS,
+                WS_POPUP | WS_VISIBLE,
                 0, 0, width, height,
-                None,
-                None,
-                None,
-                None,
+                None, None, None, None,
             )?
         };
         
+        // Make window transparent
         unsafe {
-            if !DwmIsCompositionEnabled()?.as_bool() {
-                log::error!("DWM Composition is disabled!");
-            }
+            SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA)?;
+            
+            // DWM transparency
+            let margins = MARGINS {
+                cxLeftWidth: -1,
+                cxRightWidth: -1,
+                cyTopHeight: -1,
+                cyBottomHeight: -1,
+            };
+            let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
             
             let mut bb = DWM_BLURBEHIND::default();
             bb.dwFlags = DWM_BB_ENABLE;
@@ -100,42 +117,81 @@ impl Overlay {
             bb.hRgnBlur = HRGN::default();
             let _ = DwmEnableBlurBehindWindow(hwnd, &bb);
             
-            let _ = DwmExtendFrameIntoClientArea(hwnd, &MARGINS {
-                cxLeftWidth: -1,
-                cxRightWidth: -1,
-                cyTopHeight: -1,
-                cyBottomHeight: -1,
-            });
-            
             let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
         
-        Ok(Self { 
-            hwnd, 
-            width, 
-            height, 
+        // Create D3D11
+        let swap_desc = DXGI_SWAP_CHAIN_DESC {
+            BufferDesc: DXGI_MODE_DESC {
+                Width: width as u32,
+                Height: height as u32,
+                RefreshRate: windows::Win32::Graphics::Dxgi::Common::DXGI_RATIONAL { Numerator: 60, Denominator: 1 },
+                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                ScanlineOrdering: DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED,
+                Scaling: DXGI_MODE_SCALING_UNSPECIFIED,
+            },
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
+            BufferCount: 1,
+            OutputWindow: hwnd,
+            Windowed: BOOL::from(true),
+            SwapEffect: DXGI_SWAP_EFFECT_DISCARD,
+            Flags: 0,
+        };
+        
+        let mut device: Option<ID3D11Device> = None;
+        let mut context: Option<ID3D11DeviceContext> = None;
+        let mut swapchain: Option<IDXGISwapChain> = None;
+        
+        unsafe {
+            D3D11CreateDeviceAndSwapChain(
+                None,
+                D3D_DRIVER_TYPE_HARDWARE,
+                None,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                None,
+                D3D11_SDK_VERSION,
+                Some(&swap_desc),
+                Some(&mut swapchain),
+                Some(&mut device),
+                None,
+                Some(&mut context),
+            )?;
+        }
+        
+        let device = device.ok_or_else(|| anyhow!("Failed to create D3D11 device"))?;
+        let context = context.ok_or_else(|| anyhow!("Failed to create D3D11 context"))?;
+        let swapchain = swapchain.ok_or_else(|| anyhow!("Failed to create swapchain"))?;
+        
+        // Create render target
+        let back_buffer: ID3D11Texture2D = unsafe { swapchain.GetBuffer(0)? };
+        let render_target = unsafe { device.CreateRenderTargetView(&back_buffer, None)? };
+        
+        log::info!("D3D11 Overlay created successfully!");
+        
+        Ok(Self {
+            hwnd,
+            width,
+            height,
             state,
-            stream_proof_enabled: false,
+            device,
+            context,
+            swapchain,
+            render_target,
         })
     }
     
-    /// Toggle Stream-Proof mode (hide from screen capture)
     pub fn set_stream_proof(&mut self, enabled: bool) {
         unsafe {
             let affinity = if enabled { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE };
             if SetWindowDisplayAffinity(self.hwnd, affinity).is_ok() {
-                self.stream_proof_enabled = enabled;
                 log::info!("Stream-Proof: {}", if enabled { "ENABLED" } else { "DISABLED" });
-            } else {
-                log::warn!("Failed to set stream-proof mode");
             }
         }
     }
     
-    /// Run main loop
     pub fn run(&mut self) -> Result<()> {
         self.set_stream_proof(true);
-        
         unsafe { ShowWindow(self.hwnd, SW_SHOWNOACTIVATE) };
         
         let mut msg = MSG::default();
@@ -156,8 +212,8 @@ impl Overlay {
                 break;
             }
             
-            // INSERT key toggle
-            if unsafe { GetAsyncKeyState(0x2D) } & 1 != 0 {  // VK_INSERT = 0x2D
+            // INSERT key
+            if unsafe { GetAsyncKeyState(0x2D) } & 1 != 0 {
                 let mut settings = self.state.settings.write();
                 settings.menu_open = !settings.menu_open;
                 
@@ -165,21 +221,13 @@ impl Overlay {
                 
                 if settings.menu_open {
                     unsafe {
-                        SetWindowLongPtrW(
-                            self.hwnd, 
-                            GWL_EXSTYLE, 
-                            (ex_style & !WS_EX_TRANSPARENT.0) as isize
-                        );
+                        SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, (ex_style & !WS_EX_TRANSPARENT.0) as isize);
                         let _ = SetForegroundWindow(self.hwnd);
                     }
                     log::info!("Menu opened");
                 } else {
                     unsafe {
-                        SetWindowLongPtrW(
-                            self.hwnd, 
-                            GWL_EXSTYLE, 
-                            (ex_style | WS_EX_TRANSPARENT.0) as isize
-                        );
+                        SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, (ex_style | WS_EX_TRANSPARENT.0) as isize);
                     }
                     log::info!("Menu closed");
                 }
@@ -193,192 +241,83 @@ impl Overlay {
         Ok(())
     }
     
-    /// Render frame
     fn render(&self) {
-        unsafe { let _ = InvalidateRect(Some(self.hwnd), None, true); }
-        
         let settings = self.state.settings.read().clone();
         let esp_data = self.state.esp_data.read().clone();
         
-        let commands = generate_esp_commands(
-            &esp_data, 
-            &settings, 
-            self.width as f32, 
-            self.height as f32
-        );
+        // Clear with transparent
+        let clear_color = [0.0f32, 0.0, 0.0, 0.0];
+        unsafe {
+            self.context.OMSetRenderTargets(Some(&[Some(self.render_target.clone())]), None);
+            self.context.ClearRenderTargetView(&self.render_target, &clear_color);
+        }
         
-        let hdc = unsafe { GetDC(Some(self.hwnd)) };
-        unsafe { SetBkMode(hdc, TRANSPARENT); }
+        // Draw ESP
+        self.draw_esp(&esp_data, &settings);
         
-        for cmd in commands {
-            match cmd {
-                DrawCommand::Rect { x, y, w, h, color, thickness } => {
-                    self.draw_rect(hdc, x, y, w, h, color, thickness as i32);
-                }
-                DrawCommand::RectFilled { x, y, w, h, color } => {
-                    self.draw_rect_filled(hdc, x, y, w, h, color);
-                }
-                DrawCommand::Text { .. } => {}
+        // Draw menu
+        if settings.menu_open {
+            self.draw_menu();
+        }
+        
+        // Present
+        unsafe {
+            let _ = self.swapchain.Present(1, 0);
+        }
+    }
+    
+    fn draw_esp(&self, data: &EspData, settings: &Settings) {
+        if !settings.esp_enabled { return; }
+        
+        for entity in &data.entities {
+            // World to screen
+            let screen_pos = self.world_to_screen(&data.view_matrix, entity.origin);
+            let head_pos = self.world_to_screen(&data.view_matrix, 
+                glam::Vec3::new(entity.origin.x, entity.origin.y, entity.origin.z + 72.0));
+            
+            if let (Some(feet), Some(head)) = (screen_pos, head_pos) {
+                let box_height = feet.y - head.y;
+                let box_width = box_height / 2.0;
+                let x = head.x - box_width / 2.0;
+                let y = head.y;
+                
+                // Box ESP - render directly via D3D11 would need more setup
+                // For now just log that we found entities
+                log::debug!("Entity at screen ({}, {}), health: {}", x, y, entity.health);
             }
         }
-        
-        if settings.menu_open {
-            log::debug!("Drawing menu at ({}, {})", self.width / 2 - 200, self.height / 2 - 150);
-            self.draw_menu(hdc);
-        }
-        
-        unsafe { ReleaseDC(Some(self.hwnd), hdc); }
-        
-        // Force window update
-        unsafe {
-            let _ = windows::Win32::Graphics::Gdi::UpdateWindow(self.hwnd);
-        }
     }
     
-    fn draw_rect(&self, hdc: windows::Win32::Graphics::Gdi::HDC, x: f32, y: f32, w: f32, h: f32, color: Color, thickness: i32) {
-        unsafe {
-            let pen = CreatePen(PS_SOLID, thickness, windows::Win32::Foundation::COLORREF(
-                (color.r as u32) | ((color.g as u32) << 8) | ((color.b as u32) << 16)
-            ));
-            let old_pen = SelectObject(hdc, HGDIOBJ(pen.0));
-            let null_brush = GetStockObject(NULL_BRUSH);
-            let old_brush = SelectObject(hdc, null_brush);
-            
-            Rectangle(hdc, x as i32, y as i32, (x + w) as i32, (y + h) as i32);
-            
-            SelectObject(hdc, old_pen);
-            SelectObject(hdc, old_brush);
-            DeleteObject(HGDIOBJ(pen.0));
-        }
+    fn draw_menu(&self) {
+        // Menu would be rendered via D3D11
+        // This requires vertex buffers, shaders etc.
+        // For full implementation, we'd need ImGui or custom 2D renderer
+        log::debug!("Drawing menu");
     }
     
-    fn draw_rect_filled(&self, hdc: windows::Win32::Graphics::Gdi::HDC, x: f32, y: f32, w: f32, h: f32, color: Color) {
-        unsafe {
-            let brush = CreateSolidBrush(windows::Win32::Foundation::COLORREF(
-                (color.r as u32) | ((color.g as u32) << 8) | ((color.b as u32) << 16)
-            ));
-            
-            let rect = RECT {
-                left: x as i32,
-                top: y as i32,
-                right: (x + w) as i32,
-                bottom: (y + h) as i32,
-            };
-            
-            FillRect(hdc, &rect, brush);
-            DeleteObject(HGDIOBJ(brush.0));
+    fn world_to_screen(&self, matrix: &[[f32; 4]; 4], pos: glam::Vec3) -> Option<glam::Vec2> {
+        let w = matrix[3][0] * pos.x + matrix[3][1] * pos.y + matrix[3][2] * pos.z + matrix[3][3];
+        
+        if w < 0.001 {
+            return None;
         }
-    }
-    
-    fn draw_menu(&self, hdc: windows::Win32::Graphics::Gdi::HDC) {
-        let menu_x = (self.width / 2 - 200) as f32;
-        let menu_y = (self.height / 2 - 150) as f32;
-        let menu_w = 400.0;
-        let menu_h = 300.0;
         
-        // Background
-        self.draw_rect_filled(hdc, menu_x, menu_y, menu_w, menu_h, Color::new(20, 20, 30, 240));
-        self.draw_rect(hdc, menu_x, menu_y, menu_w, menu_h, Color::new(80, 80, 200, 255), 2);
+        let x = matrix[0][0] * pos.x + matrix[0][1] * pos.y + matrix[0][2] * pos.z + matrix[0][3];
+        let y = matrix[1][0] * pos.x + matrix[1][1] * pos.y + matrix[1][2] * pos.z + matrix[1][3];
         
-        // Header
-        self.draw_rect_filled(hdc, menu_x, menu_y, menu_w, 35.0, Color::new(40, 40, 60, 255));
-        self.draw_rect_filled(hdc, menu_x, menu_y + 35.0, menu_w, 2.0, Color::new(100, 100, 255, 255));
-        self.draw_text(hdc, "EXTERNA CS2", (menu_x + menu_w / 2.0) as i32, (menu_y + 10.0) as i32, Color::new(255, 255, 255, 255), 18);
+        let screen_x = (self.width as f32 / 2.0) * (1.0 + x / w);
+        let screen_y = (self.height as f32 / 2.0) * (1.0 - y / w);
         
-        // ESP Settings box
-        self.draw_rect_filled(hdc, menu_x + 20.0, menu_y + 50.0, 360.0, 130.0, Color::new(30, 30, 45, 255));
-        self.draw_rect(hdc, menu_x + 20.0, menu_y + 50.0, 360.0, 130.0, Color::new(60, 60, 80, 255), 1);
-        
-        // Settings text
-        self.draw_text_left(hdc, "ESP Settings", (menu_x + 30.0) as i32, (menu_y + 58.0) as i32, Color::new(100, 100, 255, 255), 14);
-        self.draw_text_left(hdc, "[x] Box ESP", (menu_x + 40.0) as i32, (menu_y + 85.0) as i32, Color::new(200, 200, 200, 255), 13);
-        self.draw_text_left(hdc, "[x] Health Bar", (menu_x + 40.0) as i32, (menu_y + 105.0) as i32, Color::new(200, 200, 200, 255), 13);
-        self.draw_text_left(hdc, "[x] Armor Bar", (menu_x + 40.0) as i32, (menu_y + 125.0) as i32, Color::new(200, 200, 200, 255), 13);
-        self.draw_text_left(hdc, "[x] Stream-Proof", (menu_x + 40.0) as i32, (menu_y + 145.0) as i32, Color::new(100, 255, 100, 255), 13);
-        
-        // Close button
-        let btn_x = menu_x + 100.0;
-        let btn_y = menu_y + menu_h - 55.0;
-        let btn_w = 200.0;
-        let btn_h = 40.0;
-        
-        self.draw_rect_filled(hdc, btn_x, btn_y, btn_w, btn_h, Color::new(180, 40, 40, 255));
-        self.draw_rect(hdc, btn_x, btn_y, btn_w, btn_h, Color::new(220, 60, 60, 255), 1);
-        self.draw_text(hdc, "CLOSE CHEAT", (btn_x + btn_w / 2.0) as i32, (btn_y + 10.0) as i32, Color::new(255, 255, 255, 255), 14);
-        
-        // Footer
-        self.draw_text(hdc, "Press INSERT to close menu", (menu_x + menu_w / 2.0) as i32, (menu_y + menu_h - 20.0) as i32, Color::new(100, 100, 100, 255), 11);
-    }
-    
-    fn draw_text(&self, hdc: windows::Win32::Graphics::Gdi::HDC, text: &str, x: i32, y: i32, color: Color, size: i32) {
-        unsafe {
-            let font = CreateFontW(
-                size, 0, 0, 0, FW_BOLD.0 as i32, 0, 0, 0,
-                FONT_CHARSET(1), FONT_OUTPUT_PRECISION(0), FONT_CLIP_PRECISION(0), FONT_QUALITY(5), 0,
-                windows::core::w!("Segoe UI"),
-            );
-            
-            let old_font = SelectObject(hdc, HGDIOBJ(font.0));
-            SetTextColor(hdc, windows::Win32::Foundation::COLORREF(
-                (color.r as u32) | ((color.g as u32) << 8) | ((color.b as u32) << 16)
-            ));
-            
-            let mut wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-            let len = wide.len() - 1;
-            let mut rect = RECT {
-                left: x - 150,
-                top: y,
-                right: x + 150,
-                bottom: y + size + 5,
-            };
-            
-            DrawTextW(hdc, &mut wide[..len], &mut rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            
-            SelectObject(hdc, old_font);
-            DeleteObject(HGDIOBJ(font.0));
-        }
-    }
-    
-    fn draw_text_left(&self, hdc: windows::Win32::Graphics::Gdi::HDC, text: &str, x: i32, y: i32, color: Color, size: i32) {
-        unsafe {
-            let font = CreateFontW(
-                size, 0, 0, 0, 400, 0, 0, 0,
-                FONT_CHARSET(1), FONT_OUTPUT_PRECISION(0), FONT_CLIP_PRECISION(0), FONT_QUALITY(5), 0,
-                windows::core::w!("Segoe UI"),
-            );
-            
-            let old_font = SelectObject(hdc, HGDIOBJ(font.0));
-            SetTextColor(hdc, windows::Win32::Foundation::COLORREF(
-                (color.r as u32) | ((color.g as u32) << 8) | ((color.b as u32) << 16)
-            ));
-            
-            let mut wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-            let len = wide.len() - 1;
-            let mut rect = RECT {
-                left: x,
-                top: y,
-                right: x + 300,
-                bottom: y + size + 5,
-            };
-            
-            DrawTextW(hdc, &mut wide[..len], &mut rect, DT_SINGLELINE);
-            
-            SelectObject(hdc, old_font);
-            DeleteObject(HGDIOBJ(font.0));
-        }
+        Some(glam::Vec2::new(screen_x, screen_y))
     }
 }
 
-/// Window procedure
 unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_DESTROY => {
             RUNNING.store(false, std::sync::atomic::Ordering::Relaxed);
             PostQuitMessage(0);
             LRESULT(0)
-        }
-        WM_ERASEBKGND => {
-            LRESULT(1)
         }
         WM_NCHITTEST => {
             if let Some(state_ptr) = OVERLAY_STATE {

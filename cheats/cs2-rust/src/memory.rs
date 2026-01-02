@@ -150,6 +150,16 @@ impl GameMemory {
             self.client_base + offsets::client::DW_LOCAL_PLAYER_CONTROLLER
         );
         
+        // Debug log (only once per second)
+        static mut LOG_COUNTER: u32 = 0;
+        unsafe {
+            LOG_COUNTER += 1;
+            if LOG_COUNTER % 500 == 1 {
+                log::debug!("client_base: 0x{:X}, local_controller: 0x{:X}", 
+                    self.client_base, local_controller);
+            }
+        }
+        
         if local_controller == 0 {
             return Ok(data);
         }

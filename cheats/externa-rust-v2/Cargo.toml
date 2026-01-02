@@ -14,6 +14,10 @@ env_logger = "0.11"
 # Lazy static initialization
 once_cell = "1.20"
 
+# ImGui
+imgui = "0.12"
+imgui-dx11-renderer = "0.9"
+
 # Windows API
 [dependencies.windows]
 version = "0.58"
