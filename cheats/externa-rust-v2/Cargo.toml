@@ -1,29 +1,49 @@
 [package]
-name = "externa-cs2-v2"
-version = "2.0.0"
+name = "externa-rust-v2"
+version = "2.1.0"
 edition = "2021"
 
 [dependencies]
-glam = "0.29"
-anyhow = "1.0"
-log = "0.4"
-env_logger = "0.11"
-
-[dependencies.windows]
-version = "0.59"
-features = [
+# Windows API
+windows = { version = "0.59", features = [
     "Win32_Foundation",
+    "Win32_Security",
     "Win32_System_Threading",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Diagnostics_Debug",
+    "Win32_System_ProcessStatus",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Console",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_Graphics_Gdi",
-]
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_DirectWrite",
+] }
+
+# Math
+glam = "0.29"
+
+# Utilities
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.11"
+parking_lot = "0.12"
+
+[profile.dev]
+opt-level = 0
+debug = true
+codegen-units = 256
+lto = false
+incremental = true
 
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
+panic = "abort"
 strip = true
