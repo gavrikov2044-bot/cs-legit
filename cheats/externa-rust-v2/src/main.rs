@@ -82,7 +82,8 @@ fn main() -> Result<()> {
                      if ent_list != 0 && pawn_h != 0 {
                          let entry: usize = mem_clone.read(ent_list + 8 * ((pawn_h as usize & 0x7FFF) >> 9) + 16).unwrap_or(0);
                          if entry != 0 {
-                             let pawn: usize = mem_clone.read(entry + 120 * (pawn_h as usize & 0x1FF)).unwrap_or(0);
+                             // Читаем как массив указателей (шаг 8 байт)
+                             let pawn: usize = mem_clone.read(entry + 8 * (pawn_h as usize & 0x1FF)).unwrap_or(0);
                              if pawn != 0 {
                                  local_team = mem_clone.read(pawn + game::offsets::netvars::M_I_TEAM_NUM).unwrap_or(0);
                              }
@@ -108,7 +109,8 @@ fn main() -> Result<()> {
                         let list_entry: usize = mem_clone.read(ent_list + 8 * ((i & 0x7FFF) >> 9) + 16).unwrap_or(0);
                         if list_entry == 0 { continue; }
                         
-                        let controller: usize = mem_clone.read(list_entry + 120 * (i & 0x1FF)).unwrap_or(0);
+                        // Читаем как массив указателей (шаг 8 байт)
+                        let controller: usize = mem_clone.read(list_entry + 8 * (i & 0x1FF)).unwrap_or(0);
                         if controller == 0 { continue; }
                         
                         let pawn_h: u32 = mem_clone.read(controller + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
@@ -122,7 +124,8 @@ fn main() -> Result<()> {
                         let list_entry2: usize = mem_clone.read(ent_list + 8 * ((pawn_h as usize & 0x7FFF) >> 9) + 16).unwrap_or(0);
                         if list_entry2 == 0 { continue; }
                         
-                        let pawn: usize = mem_clone.read(list_entry2 + 120 * (pawn_h as usize & 0x1FF)).unwrap_or(0);
+                        // Читаем как массив указателей (шаг 8 байт)
+                        let pawn: usize = mem_clone.read(list_entry2 + 8 * (pawn_h as usize & 0x1FF)).unwrap_or(0);
                         if pawn == 0 { continue; }
 
                         // Health check
