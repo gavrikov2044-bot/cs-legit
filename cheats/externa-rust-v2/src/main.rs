@@ -117,11 +117,14 @@ fn main() -> Result<()> {
                 st.entities.clear();
                 let ent_list: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_entity_list).unwrap_or(0);
                 
-                // Minimal logging - only every 5 seconds
-                if last_debug.elapsed().as_secs() >= 5 {
+                // Logging with diagnostics
+                let should_log = last_debug.elapsed().as_secs() >= 3;
+                if should_log {
                     last_debug = std::time::Instant::now();
-                    info!("Entities: {} | Local Team: {}", st.entities.len(), st.local_team);
                 }
+                
+                let mut debug_stats = (0u32, 0u32, 0u32, 0u32, 0u32); // ctrl_found, pawn_h_ok, pawn_ok, health_ok, added
+                
                 if ent_list != 0 {
                     // CEntityIdentity stride = 0x70 (112 bytes), entity pointer at +0x00
                     const STRIDE: usize = 0x70;
@@ -132,9 +135,17 @@ fn main() -> Result<()> {
                         
                         let controller: usize = mem_clone.read(list_entry + STRIDE * (i & 0x1FF)).unwrap_or(0);
                         if controller == 0 || controller > 0x7FF000000000 { continue; }
+                        debug_stats.0 += 1;
                         
                         let pawn_h: u32 = mem_clone.read(controller + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
+                        
+                        // Debug first valid controller
+                        if should_log && debug_stats.0 == 1 {
+                            info!("First ctrl: 0x{:X}, pawn_h=0x{:X}", controller, pawn_h);
+                        }
+                        
                         if pawn_h == 0 || pawn_h == 0xFFFFFFFF { continue; }
+                        debug_stats.1 += 1;
                         
                         let list_entry2: usize = mem_clone.read(ent_list + 8 * ((pawn_h as usize & 0x7FFF) >> 9) + 16).unwrap_or(0);
                         if list_entry2 == 0 { continue; }
@@ -142,10 +153,18 @@ fn main() -> Result<()> {
                         // Pawn pointer from CEntityIdentity
                         let pawn: usize = mem_clone.read(list_entry2 + STRIDE * (pawn_h as usize & 0x1FF)).unwrap_or(0);
                         if pawn == 0 || pawn > 0x7FF000000000 { continue; }
+                        debug_stats.2 += 1;
 
                         // Health check
                         let health: i32 = mem_clone.read(pawn + game::offsets::netvars::M_I_HEALTH).unwrap_or(0);
+                        
+                        // Debug first pawn
+                        if should_log && debug_stats.2 == 1 {
+                            info!("First pawn: 0x{:X}, health={}", pawn, health);
+                        }
+                        
                         if health <= 0 || health > 100 { continue; }
+                        debug_stats.3 += 1;
                         
                         let team: i32 = mem_clone.read(pawn + game::offsets::netvars::M_I_TEAM_NUM).unwrap_or(0);
                         
@@ -153,26 +172,20 @@ fn main() -> Result<()> {
                         let node: usize = mem_clone.read(pawn + game::offsets::netvars::M_P_GAME_SCENE_NODE).unwrap_or(0);
                         let pos: Vec3 = mem_clone.read(node + game::offsets::netvars::M_VEC_ABS_ORIGIN).unwrap_or(Vec3::ZERO);
                         
-                        // Bones
-                        let mut bones = [Vec3::ZERO; 30];
-                        let model_state: usize = mem_clone.read(node + game::offsets::netvars::M_MODEL_STATE).unwrap_or(0);
-                        if model_state != 0 {
-                            let bone_array: usize = mem_clone.read(model_state + game::offsets::netvars::M_BONE_ARRAY).unwrap_or(0);
-                            if bone_array != 0 {
-                                // Important bones indices
-                                let indices = [6, 5, 4, 2, 0, 8, 9, 10, 13, 14, 15, 22, 23, 24, 25, 26, 27];
-                                for &idx in &indices {
-                                    if idx < 30 {
-                                        bones[idx] = mem_clone.read(bone_array + idx * 32).unwrap_or(Vec3::ZERO);
-                                    }
-                                }
-                            }
-                        }
+                        // Bones (disabled for now)
+                        let bones = [Vec3::ZERO; 30];
 
                         st.entities.push(game::entity::Entity {
                             pawn, controller, pos, health, team, bones
                         });
+                        debug_stats.4 += 1;
                     }
+                }
+                
+                // Log stats
+                if should_log {
+                    info!("Stats: ctrl={} pawn_h={} pawn={} health={} added={} | LocalTeam={}",
+                          debug_stats.0, debug_stats.1, debug_stats.2, debug_stats.3, debug_stats.4, st.local_team);
                 }
             }
             thread::sleep(Duration::from_millis(2));
