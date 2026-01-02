@@ -93,17 +93,18 @@ fn main() -> Result<()> {
                 // Read Local Player
                 let mut local_team = 0;
                 let local_ctrl: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_local_player_controller).unwrap_or(0);
-                // CEntityIdentity stride = 0x70 (112 bytes)
-                const STRIDE: usize = 0x70;
+                // CEntityIdentity stride = 112 bytes (0x70)
+                const STRIDE: usize = 112;
                 
                 if local_ctrl != 0 && local_ctrl < 0x7FF000000000 {
                      let pawn_h: u32 = mem_clone.read(local_ctrl + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
                      let ent_list: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_entity_list).unwrap_or(0);
                      
                      if ent_list != 0 && pawn_h != 0 && pawn_h != 0xFFFFFFFF {
-                         let entry: usize = mem_clone.read(ent_list + 8 * ((pawn_h as usize & 0x7FFF) >> 9) + 16).unwrap_or(0);
+                         // C++ formula: ((8 * (pawn_h & 0x7FFF)) >> 9) + 16
+                         let entry: usize = mem_clone.read(ent_list + ((8 * (pawn_h as usize & 0x7FFF)) >> 9) + 16).unwrap_or(0);
                          if entry != 0 {
-                             // Entity pointer at offset 0 in CEntityIdentity
+                             // Entity pointer at offset 0 in CEntityIdentity (stride = 112)
                              let pawn: usize = mem_clone.read(entry + STRIDE * (pawn_h as usize & 0x1FF)).unwrap_or(0);
                              if pawn != 0 && pawn < 0x7FF000000000 {
                                  local_team = mem_clone.read(pawn + game::offsets::netvars::M_I_TEAM_NUM).unwrap_or(0);
@@ -126,11 +127,13 @@ fn main() -> Result<()> {
                 let mut debug_stats = (0u32, 0u32, 0u32, 0u32, 0u32); // ctrl_found, pawn_h_ok, pawn_ok, health_ok, added
                 
                 if ent_list != 0 {
-                    // CEntityIdentity stride = 0x70 (112 bytes), entity pointer at +0x00
-                    const STRIDE: usize = 0x70;
+                    // CEntityIdentity stride = 112 bytes (0x70), entity pointer at offset 0
+                    const STRIDE: usize = 112;
                     
-                    for i in 1..64 {
-                        let list_entry: usize = mem_clone.read(ent_list + 8 * ((i & 0x7FFF) >> 9) + 16).unwrap_or(0);
+                    for i in 1..=64 {
+                        // C++ formula: (8 * (i & 0x7FFF) >> 9) + 16 
+                        // Due to operator precedence: ((8 * i) >> 9) + 16
+                        let list_entry: usize = mem_clone.read(ent_list + ((8 * (i & 0x7FFF)) >> 9) + 16).unwrap_or(0);
                         if list_entry == 0 { continue; }
                         
                         let controller: usize = mem_clone.read(list_entry + STRIDE * (i & 0x1FF)).unwrap_or(0);
@@ -147,7 +150,8 @@ fn main() -> Result<()> {
                         if pawn_h == 0 || pawn_h == 0xFFFFFFFF { continue; }
                         debug_stats.1 += 1;
                         
-                        let list_entry2: usize = mem_clone.read(ent_list + 8 * ((pawn_h as usize & 0x7FFF) >> 9) + 16).unwrap_or(0);
+                        // C++ formula for pawn
+                        let list_entry2: usize = mem_clone.read(ent_list + ((8 * (pawn_h as usize & 0x7FFF)) >> 9) + 16).unwrap_or(0);
                         if list_entry2 == 0 { continue; }
                         
                         // Pawn pointer from CEntityIdentity
@@ -158,19 +162,25 @@ fn main() -> Result<()> {
                         // Health check
                         let health: i32 = mem_clone.read(pawn + game::offsets::netvars::M_I_HEALTH).unwrap_or(0);
                         
-                        // Debug first pawn
-                        if should_log && debug_stats.2 == 1 {
-                            info!("First pawn: 0x{:X}, health={}", pawn, health);
-                        }
-                        
                         if health <= 0 || health > 100 { continue; }
                         debug_stats.3 += 1;
                         
                         let team: i32 = mem_clone.read(pawn + game::offsets::netvars::M_I_TEAM_NUM).unwrap_or(0);
                         
-                        // Pos
+                        // Pos - read from GameSceneNode
                         let node: usize = mem_clone.read(pawn + game::offsets::netvars::M_P_GAME_SCENE_NODE).unwrap_or(0);
+                        if node == 0 { continue; }
+                        
                         let pos: Vec3 = mem_clone.read(node + game::offsets::netvars::M_VEC_ABS_ORIGIN).unwrap_or(Vec3::ZERO);
+                        
+                        // Debug first pawn with position
+                        if should_log && debug_stats.4 == 0 {
+                            info!("First player: pawn=0x{:X} health={} team={} pos=({:.0},{:.0},{:.0})", 
+                                  pawn, health, team, pos.x, pos.y, pos.z);
+                        }
+                        
+                        // Skip if position is zero (invalid)
+                        if pos.x == 0.0 && pos.y == 0.0 && pos.z == 0.0 { continue; }
                         
                         // Bones (disabled for now)
                         let bones = [Vec3::ZERO; 30];
@@ -202,30 +212,56 @@ fn main() -> Result<()> {
         overlay.begin_scene();
         
         if let Ok(st) = state.lock() {
+            let mut drawn = 0;
+            let mut skipped_team = 0;
+            let mut skipped_w2s = 0;
+            let mut skipped_size = 0;
+            
             for ent in &st.entities {
-                if ent.team == st.local_team { continue; } // Skip teammates
+                // Count teammates but DON'T skip for now (debug)
+                let is_teammate = ent.team == st.local_team;
+                if is_teammate {
+                    skipped_team += 1;
+                    continue; // Re-enable this after testing
+                }
                 
-                let is_enemy = true; // For color selection
+                let is_enemy = !is_teammate;
 
-                // Box
-                let head_pos = ent.bones[6]; // Head bone
-                let head_pos_visual = Vec3::new(ent.pos.x, ent.pos.y, ent.pos.z + 75.0); // Fallback
-                
-                let target_head = if head_pos.length() > 0.0 { head_pos + Vec3::new(0.0, 0.0, 8.0) } else { head_pos_visual };
+                // Box - use pos directly with height offset
+                let feet_pos = ent.pos;
+                let head_pos = Vec3::new(ent.pos.x, ent.pos.y, ent.pos.z + 72.0);
 
-                if let (Some(s_feet), Some(s_head)) = (
-                    game::math::w2s(&st.view_matrix, ent.pos, overlay.width as f32, overlay.height as f32),
-                    game::math::w2s(&st.view_matrix, target_head, overlay.width as f32, overlay.height as f32)
+                match (
+                    game::math::w2s(&st.view_matrix, feet_pos, overlay.width as f32, overlay.height as f32),
+                    game::math::w2s(&st.view_matrix, head_pos, overlay.width as f32, overlay.height as f32)
                 ) {
-                    let h = s_feet.y - s_head.y;
-                    let w = h * 0.4;
-                    let x = s_head.x - w / 2.0;
-                    let y = s_head.y;
-                    
-                    // Draw box only (skeleton disabled for now)
-                    if h > 5.0 && h < 500.0 {
-                        overlay.draw_box(x, y, w, h, is_enemy);
+                    (Some(s_feet), Some(s_head)) => {
+                        let h = s_feet.y - s_head.y;
+                        let w = h * 0.4;
+                        let x = s_head.x - w / 2.0;
+                        let y = s_head.y;
+                        
+                        if h > 5.0 && h < 500.0 {
+                            overlay.draw_box(x, y, w, h, is_enemy);
+                            drawn += 1;
+                        } else {
+                            skipped_size += 1;
+                        }
+                    },
+                    _ => {
+                        skipped_w2s += 1;
                     }
+                }
+            }
+            
+            // Debug render stats occasionally
+            static mut LAST_LOG: u64 = 0;
+            unsafe {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                if now > LAST_LOG + 3 {
+                    LAST_LOG = now;
+                    info!("Render: ents={} drawn={} skip_team={} skip_w2s={} skip_size={}", 
+                          st.entities.len(), drawn, skipped_team, skipped_w2s, skipped_size);
                 }
             }
         }

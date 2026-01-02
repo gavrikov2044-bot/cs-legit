@@ -1,0 +1,57 @@
+name: 🔒 Build Internal
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-internal:
+    name: 🔒 INTERNAL (DLL Injection)
+    runs-on: windows-latest
+
+    steps:
+    - name: 📥 Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: 🔧 Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: ⚡ Setup Ninja
+      uses: seanmiddleditch/gha-setup-ninja@v5
+
+    - name: ⚙️ Configure
+      run: |
+        Write-Host ""
+        Write-Host "=========================================="
+        Write-Host "   INTERNAL ESP v1.0.0"
+        Write-Host "=========================================="
+        cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+    - name: 🔨 Build Internal DLL
+      run: cmake --build build --target interna --config Release
+
+    - name: 🔨 Build Injector
+      run: cmake --build build --target injector --config Release
+
+    - name: ✅ Verify
+      run: |
+        Write-Host ""
+        Write-Host "=========================================="
+        Write-Host "   BUILD SUCCESS"
+        Write-Host "=========================================="
+        Get-ChildItem -Path build -Recurse -Include *.dll,*.exe | ForEach-Object {
+          $size = [math]::Round($_.Length / 1KB, 2)
+          Write-Host "   $($_.Name): $size KB"
+        }
+    
+    - name: 📦 Upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: Internal-${{ github.run_number }}
+        path: |
+          build/bin/*.dll
+          build/bin/*.exe
+          build/interna/*.dll
+          build/injector/*.exe
+        retention-days: 30
