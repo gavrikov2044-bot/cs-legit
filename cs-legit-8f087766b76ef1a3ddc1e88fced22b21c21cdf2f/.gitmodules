@@ -1,6 +1,0 @@
-[submodule "external_cheat_cs2/src/includes/imgui"]
-	path = external_cheat_cs2/src/includes/imgui
-	url = https://github.com/ocornut/imgui.git
-[submodule "cs2-dumper"]
-	path = cs2-dumper
-	url = https://github.com/a2x/cs2-dumper.git

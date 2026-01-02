@@ -217,6 +217,7 @@ fn main() -> Result<()> {
             let mut skipped_team = 0;
             let mut skipped_w2s = 0;
             let mut skipped_size = 0;
+            let mut first_enemy_logged = false;
             
             for ent in &st.entities {
                 // Count teammates but DON'T skip for now (debug)
@@ -241,6 +242,15 @@ fn main() -> Result<()> {
                         let w = h * 0.4;
                         let x = s_head.x - w / 2.0;
                         let y = s_head.y;
+                        
+                        // Debug first enemy
+                        if !first_enemy_logged {
+                            first_enemy_logged = true;
+                            info!("W2S Debug: pos=({:.0},{:.0},{:.0}) -> screen=({:.0},{:.0}) h={:.0}", 
+                                  ent.pos.x, ent.pos.y, ent.pos.z, s_head.x, s_head.y, h);
+                            info!("Matrix[0]: [{:.3},{:.3},{:.3},{:.3}]", 
+                                  st.view_matrix[0][0], st.view_matrix[0][1], st.view_matrix[0][2], st.view_matrix[0][3]);
+                        }
                         
                         if h > 5.0 && h < 500.0 {
                             overlay.draw_box(x, y, w, h, is_enemy);
