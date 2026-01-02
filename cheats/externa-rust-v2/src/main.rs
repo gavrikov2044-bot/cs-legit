@@ -93,16 +93,16 @@ fn main() -> Result<()> {
                 // Read Local Player
                 let mut local_team = 0;
                 let local_ctrl: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_local_player_controller).unwrap_or(0);
-                if local_ctrl != 0 {
+                if local_ctrl != 0 && local_ctrl < 0x7FF000000000 {
                      let pawn_h: u32 = mem_clone.read(local_ctrl + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
                      let ent_list: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_entity_list).unwrap_or(0);
                      
-                     if ent_list != 0 && pawn_h != 0 {
+                     if ent_list != 0 && pawn_h != 0 && pawn_h != 0xFFFFFFFF {
                          let entry: usize = mem_clone.read(ent_list + 8 * ((pawn_h as usize & 0x7FFF) >> 9) + 16).unwrap_or(0);
                          if entry != 0 {
-                             // Читаем как массив указателей (шаг 8 байт)
-                             let pawn: usize = mem_clone.read(entry + 8 * (pawn_h as usize & 0x1FF)).unwrap_or(0);
-                             if pawn != 0 {
+                             // CEntityIdentity: stride=120, entity pointer at +0x08
+                             let pawn: usize = mem_clone.read(entry + 120 * (pawn_h as usize & 0x1FF) + 8).unwrap_or(0);
+                             if pawn != 0 && pawn < 0x7FF000000000 {
                                  local_team = mem_clone.read(pawn + game::offsets::netvars::M_I_TEAM_NUM).unwrap_or(0);
                              }
                          }
@@ -144,25 +144,29 @@ fn main() -> Result<()> {
                         info!("--- Chunk[0] at ent_list+16 = 0x{:X} ---", chunk0);
                         
                         if chunk0 > 0x10000000000 {
-                            // Dump first 5 entities from chunk
-                            info!("--- Entities in Chunk[0] (testing strides) ---");
+                            // CEntityIdentity structure is 120 bytes:
+                            // +0x00: vtable (module address)
+                            // +0x08: entity pointer (heap address) ← we need this!
+                            // +0x10: handle, flags, etc.
+                            info!("--- Testing CEntityIdentity structure (stride=120, entity at +0x08) ---");
                             for i in 1..6 {
-                                let e_8: usize = mem_clone.read(chunk0 + 8 * i).unwrap_or(0);
-                                let e_116: usize = mem_clone.read(chunk0 + 116 * i).unwrap_or(0);
-                                let e_120: usize = mem_clone.read(chunk0 + 120 * i).unwrap_or(0);
+                                // Read first field (vtable) and second field (entity ptr)
+                                let vtable: usize = mem_clone.read(chunk0 + 120 * i).unwrap_or(0);
+                                let entity_ptr: usize = mem_clone.read(chunk0 + 120 * i + 8).unwrap_or(0);
                                 
-                                info!("  Entity[{}]:", i);
-                                info!("    stride=8:   0x{:X} (heap: {})", e_8, e_8 > 0x10000000000);
-                                info!("    stride=116: 0x{:X} (heap: {})", e_116, e_116 > 0x10000000000);
-                                info!("    stride=120: 0x{:X} (heap: {})", e_120, e_120 > 0x10000000000);
+                                let is_valid_entity = entity_ptr > 0x10000000000 && entity_ptr < 0x7FF000000000;
                                 
-                                // For valid heap pointers, try reading pawn handle
-                                for (stride, ptr) in [(8, e_8), (116, e_116), (120, e_120)] {
-                                    if ptr > 0x10000000000 {
-                                        let pawn_h: u32 = mem_clone.read(ptr + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
-                                        if pawn_h != 0 {
-                                            info!("      [stride={}] FOUND pawn_handle=0x{:X}", stride, pawn_h);
-                                        }
+                                info!("  Entity[{}]: vtable=0x{:X}, entity_ptr=0x{:X} (valid: {})", 
+                                      i, vtable, entity_ptr, is_valid_entity);
+                                
+                                if is_valid_entity {
+                                    // Try to read pawn handle from entity
+                                    let pawn_h: u32 = mem_clone.read(entity_ptr + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
+                                    let health: i32 = mem_clone.read(entity_ptr + game::offsets::netvars::M_I_HEALTH).unwrap_or(0);
+                                    info!("    -> pawn_handle=0x{:X}, health={}", pawn_h, health);
+                                    
+                                    if pawn_h != 0 && pawn_h != 0xFFFFFFFF {
+                                        info!("    *** VALID PLAYER FOUND! ***");
                                     }
                                 }
                             }
@@ -181,20 +185,20 @@ fn main() -> Result<()> {
                         let list_entry: usize = mem_clone.read(ent_list + 8 * ((i & 0x7FFF) >> 9) + 16).unwrap_or(0);
                         if list_entry == 0 { continue; }
                         
-                        // Читаем как массив указателей (шаг 8 байт)
-                        let controller: usize = mem_clone.read(list_entry + 8 * (i & 0x1FF)).unwrap_or(0);
-                        if controller == 0 { continue; }
+                        // CEntityIdentity: stride=120, entity pointer at +0x08
+                        let controller: usize = mem_clone.read(list_entry + 120 * (i & 0x1FF) + 8).unwrap_or(0);
+                        if controller == 0 || controller > 0x7FF000000000 { continue; } // Skip module addresses
                         
                         let pawn_h: u32 = mem_clone.read(controller + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
 
-                        if pawn_h == 0 { continue; }
+                        if pawn_h == 0 || pawn_h == 0xFFFFFFFF { continue; }
                         
                         let list_entry2: usize = mem_clone.read(ent_list + 8 * ((pawn_h as usize & 0x7FFF) >> 9) + 16).unwrap_or(0);
                         if list_entry2 == 0 { continue; }
                         
-                        // Читаем как массив указателей (шаг 8 байт)
-                        let pawn: usize = mem_clone.read(list_entry2 + 8 * (pawn_h as usize & 0x1FF)).unwrap_or(0);
-                        if pawn == 0 { continue; }
+                        // CEntityIdentity: stride=120, entity pointer at +0x08
+                        let pawn: usize = mem_clone.read(list_entry2 + 120 * (pawn_h as usize & 0x1FF) + 8).unwrap_or(0);
+                        if pawn == 0 || pawn > 0x7FF000000000 { continue; }
 
                         // Health check
                         let health: i32 = mem_clone.read(pawn + game::offsets::netvars::M_I_HEALTH).unwrap_or(0);
