@@ -93,18 +93,18 @@ fn main() -> Result<()> {
                 // Read Local Player
                 let mut local_team = 0;
                 let local_ctrl: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_local_player_controller).unwrap_or(0);
-                // CEntityIdentity stride = 112 bytes (0x70)
-                const STRIDE: usize = 112;
+                // From tutorial: stride = 0x78 (120 bytes)
+                const STRIDE: usize = 0x78;
                 
                 if local_ctrl != 0 && local_ctrl < 0x7FF000000000 {
                      let pawn_h: u32 = mem_clone.read(local_ctrl + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
                      let ent_list: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_entity_list).unwrap_or(0);
                      
                      if ent_list != 0 && pawn_h != 0 && pawn_h != 0xFFFFFFFF {
-                         // C++ formula for pawn: 8 * ((pawnHandle & 0x7FFF) >> 9) + 16
-                         let entry: usize = mem_clone.read(ent_list + 8 * ((pawn_h as usize & 0x7FFF) >> 9) + 16).unwrap_or(0);
+                         // Tutorial: listEntry2 = entityList + 0x8 * ((pawnHandle & 0x7FFF) >> 9) + 0x10
+                         let entry: usize = mem_clone.read(ent_list + 0x8 * ((pawn_h as usize & 0x7FFF) >> 9) + 0x10).unwrap_or(0);
                          if entry != 0 {
-                             // Entity pointer at offset 0 in CEntityIdentity (stride = 112)
+                             // Tutorial: pawn = listEntry2 + 0x78 * (pawnHandle & 0x1FF)
                              let pawn: usize = mem_clone.read(entry + STRIDE * (pawn_h as usize & 0x1FF)).unwrap_or(0);
                              if pawn != 0 && pawn < 0x7FF000000000 {
                                  local_team = mem_clone.read(pawn + game::offsets::netvars::M_I_TEAM_NUM).unwrap_or(0);
@@ -127,16 +127,20 @@ fn main() -> Result<()> {
                 let mut debug_stats = (0u32, 0u32, 0u32, 0u32, 0u32); // ctrl_found, pawn_h_ok, pawn_ok, health_ok, added
                 
                 if ent_list != 0 {
-                    // CEntityIdentity stride = 112 bytes (0x70), entity pointer at offset 0
-                    const STRIDE: usize = 112;
+                    // From tutorial: stride = 0x78 (120 bytes)
+                    const STRIDE: usize = 0x78; // 120 bytes!
                     
-                    for i in 1..=64 {
-                        // C++ formula: (8 * (i & 0x7FFF) >> 9) + 16 
-                        // Due to operator precedence: ((8 * i) >> 9) + 16
-                        let list_entry: usize = mem_clone.read(ent_list + ((8 * (i & 0x7FFF)) >> 9) + 16).unwrap_or(0);
+                    // Read listEntry ONCE with offset 0x10
+                    let list_entry: usize = mem_clone.read(ent_list + 0x10).unwrap_or(0);
+                    if list_entry == 0 { 
+                        if should_log { info!("listEntry is NULL!"); }
+                    }
+                    
+                    for i in 0..64 {
                         if list_entry == 0 { continue; }
                         
-                        let controller: usize = mem_clone.read(list_entry + STRIDE * (i & 0x1FF)).unwrap_or(0);
+                        // Tutorial: controller = listEntry + i * 0x78
+                        let controller: usize = mem_clone.read(list_entry + i * STRIDE).unwrap_or(0);
                         if controller == 0 || controller > 0x7FF000000000 { continue; }
                         debug_stats.0 += 1;
                         
@@ -150,12 +154,11 @@ fn main() -> Result<()> {
                         if pawn_h == 0 || pawn_h == 0xFFFFFFFF { continue; }
                         debug_stats.1 += 1;
                         
-                        // C++ formula for pawn: 0x8 * ((pawnHandle & 0x7FFF) >> 9) + 16
-                        // Different from controller! First shift, then multiply
-                        let list_entry2: usize = mem_clone.read(ent_list + 8 * ((pawn_h as usize & 0x7FFF) >> 9) + 16).unwrap_or(0);
+                        // Tutorial: listEntry2 = entityList + 0x8 * ((pawnHandle & 0x7FFF) >> 9) + 0x10
+                        let list_entry2: usize = mem_clone.read(ent_list + 0x8 * ((pawn_h as usize & 0x7FFF) >> 9) + 0x10).unwrap_or(0);
                         if list_entry2 == 0 { continue; }
                         
-                        // Pawn pointer from CEntityIdentity
+                        // Tutorial: pawn = listEntry2 + 0x78 * (pawnHandle & 0x1FF)
                         let pawn: usize = mem_clone.read(list_entry2 + STRIDE * (pawn_h as usize & 0x1FF)).unwrap_or(0);
                         if pawn == 0 || pawn > 0x7FF000000000 { continue; }
                         debug_stats.2 += 1;
