@@ -42,13 +42,64 @@ fn main() -> Result<()> {
         thread::sleep(Duration::from_secs(1));
     };
 
-    // 3. Offsets (From Dump)
-    info!("Using hardcoded offsets from dump (2026-01-02)...");
-    let offsets = Arc::new(game::offsets::Offsets {
-        dw_entity_list: game::offsets::DW_ENTITY_LIST,
-        dw_local_player_controller: game::offsets::DW_LOCAL_PLAYER_CONTROLLER,
-        dw_view_matrix: game::offsets::DW_VIEW_MATRIX,
-    });
+    // 3. Offsets - Try Pattern Scanner first, fallback to hardcoded
+    info!("Scanning for offsets with pattern scanner...");
+    
+    // Try multiple pattern sets
+    let pattern_sets = vec![
+        // Set 1: Common CS2 patterns
+        vec![
+            memory::scanner::Pattern::new("dwEntityList", "48 8B 0D ? ? ? ? 48 89 7C 24 ? 8B FA C1 EB", 3, 7),
+            memory::scanner::Pattern::new("dwLocalPlayerController", "48 8B 05 ? ? ? ? 48 85 C0 74 ? 8B 88", 3, 7),
+            memory::scanner::Pattern::new("dwViewMatrix", "48 8D 0D ? ? ? ? 48 C1 E0 06", 3, 7),
+        ],
+        // Set 2: Alternative patterns
+        vec![
+            memory::scanner::Pattern::new("dwEntityList", "48 8B 0D ? ? ? ? 48 85 C9 74 ? 44 0F B6 C2", 3, 7),
+            memory::scanner::Pattern::new("dwLocalPlayerController", "48 89 05 ? ? ? ? 48 85 C0 74 ? 49 8B 57", 3, 7),
+            memory::scanner::Pattern::new("dwViewMatrix", "48 8D 0D ? ? ? ? 48 8B D3 E8 ? ? ? ? 48 8B F8", 3, 7),
+        ],
+        // Set 3: Minimal patterns (more likely to match)
+        vec![
+            memory::scanner::Pattern::new("dwEntityList", "48 8B 0D ? ? ? ? 48 89 7C 24", 3, 7),
+            memory::scanner::Pattern::new("dwLocalPlayerController", "48 8B 05 ? ? ? ? 48 85 C0 74", 3, 7),
+            memory::scanner::Pattern::new("dwViewMatrix", "48 8D 0D ? ? ? ? 48 C1 E0", 3, 7),
+        ],
+    ];
+    
+    let mut scanned_offsets: Option<[usize; 3]> = None;
+    for (set_idx, patterns) in pattern_sets.iter().enumerate() {
+        info!("Trying pattern set {}...", set_idx + 1);
+        if let Ok(vals) = memory::scanner::scan_module(mem.pid, "client.dll", patterns) {
+            if vals.iter().all(|&v| v != 0) {
+                info!("Pattern set {} matched!", set_idx + 1);
+                scanned_offsets = Some([vals[0], vals[1], vals[2]]);
+                break;
+            }
+        }
+    }
+    
+    let offsets = match scanned_offsets {
+        Some(vals) => {
+            info!("Pattern scanner SUCCESS!");
+            info!("  dwEntityList: 0x{:X} (hardcoded: 0x{:X})", vals[0], game::offsets::DW_ENTITY_LIST);
+            info!("  dwLocalPlayerController: 0x{:X} (hardcoded: 0x{:X})", vals[1], game::offsets::DW_LOCAL_PLAYER_CONTROLLER);
+            info!("  dwViewMatrix: 0x{:X} (hardcoded: 0x{:X})", vals[2], game::offsets::DW_VIEW_MATRIX);
+            Arc::new(game::offsets::Offsets {
+                dw_entity_list: vals[0],
+                dw_local_player_controller: vals[1],
+                dw_view_matrix: vals[2],
+            })
+        },
+        None => {
+            info!("Pattern scanner FAILED, using hardcoded offsets from dump...");
+            Arc::new(game::offsets::Offsets {
+                dw_entity_list: game::offsets::DW_ENTITY_LIST,
+                dw_local_player_controller: game::offsets::DW_LOCAL_PLAYER_CONTROLLER,
+                dw_view_matrix: game::offsets::DW_VIEW_MATRIX,
+            })
+        }
+    };
 
     // 4. Shared State
     let state = Arc::new(Mutex::new(GameState {
