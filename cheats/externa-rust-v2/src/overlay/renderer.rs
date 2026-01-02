@@ -1,6 +1,7 @@
 use anyhow::Result;
 use windows::core::HSTRING;
 use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget;
 use windows::Win32::Graphics::Direct2D::{ID2D1Factory, ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
     D2D1CreateFactory, D2D1_FACTORY_TYPE_SINGLE_THREADED,
     D2D1_RENDER_TARGET_PROPERTIES, D2D1_HWND_RENDER_TARGET_PROPERTIES,
