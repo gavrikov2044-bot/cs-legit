@@ -3,9 +3,9 @@ use windows::core::{w, Result};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM, RECT, COLORREF};
 use windows::Win32::Graphics::Gdi::{
     GetDC, ReleaseDC, CreatePen, CreateSolidBrush, SelectObject, DeleteObject,
-    Rectangle, FillRect, SetBkMode, TRANSPARENT, PS_SOLID, HGDIOBJ,
+    Rectangle, FillRect, SetBkMode, TRANSPARENT, PS_SOLID, HGDIOBJ, HBRUSH,
     InvalidateRect, BeginPaint, EndPaint, PAINTSTRUCT, GetStockObject, NULL_BRUSH,
-    CreateCompatibleDC, CreateCompatibleBitmap, BitBlt, SRCCOPY, DeleteDC,
+    UpdateWindow,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, RegisterClassExW, DefWindowProcW, ShowWindow,
@@ -13,8 +13,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_POPUP, WS_VISIBLE, WNDCLASSEXW, CS_HREDRAW, CS_VREDRAW,
     SW_SHOWDEFAULT, SetLayeredWindowAttributes, LWA_COLORKEY,
     PeekMessageW, TranslateMessage, DispatchMessageW, PM_REMOVE, MSG,
-    GetAsyncKeyState, UpdateWindow,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 
 pub static RUNNING: AtomicBool = AtomicBool::new(true);
@@ -62,7 +62,7 @@ impl Overlay {
                 lpfnWndProc: Some(wnd_proc),
                 hInstance: instance.into(),
                 lpszClassName: class_name,
-                hbrBackground: GetStockObject(NULL_BRUSH),
+                hbrBackground: HBRUSH(GetStockObject(NULL_BRUSH).0),
                 ..Default::default()
             };
             RegisterClassExW(&wc);
