@@ -15,7 +15,6 @@ env_logger = "0.11"
 # ImGui (stable versions from ProExt)
 imgui = "0.11"
 imgui-dx11-renderer = "0.8"
-imgui-winapi-support = "0.11"
 
 # Windows API
 [dependencies.windows]
