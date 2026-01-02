@@ -178,7 +178,7 @@ impl GameMemory {
         // Read all players
         for i in 1..=64 {
             let list_entry: usize = self.read(
-                entity_list + (8 * (i & 0x7FFF) >> 9) + 16
+                entity_list + 8 * ((i & 0x7FFF) >> 9) + 16
             );
             if list_entry == 0 { continue; }
             
