@@ -4,6 +4,7 @@ cd /d "%~dp0"
 
 echo ============================================
 echo   EXTERNA KERNEL DRIVER BUILD
+echo   (No WDK Required - Pure Rust FFI)
 echo ============================================
 echo.
 echo Current directory: %CD%
@@ -38,7 +39,7 @@ if %errorlevel% neq 0 (
 
 echo [*] Building driver...
 echo.
-cargo +nightly build --release -Z build-std=core,alloc --target x86_64-pc-windows-msvc
+cargo +nightly build --release --target x86_64-pc-windows-msvc
 
 if %errorlevel% equ 0 (
     echo.
@@ -47,16 +48,17 @@ if %errorlevel% equ 0 (
     echo ============================================
     echo.
     echo Driver location:
-    echo   %CD%\target\x86_64-pc-windows-msvc\release\externa_driver.sys
+    echo   %CD%\target\x86_64-pc-windows-msvc\release\externa_driver.dll
+    echo.
+    echo Note: Rename .dll to .sys before loading
     echo.
 ) else (
     echo.
     echo [ERROR] Build failed!
     echo.
-    echo Make sure you have installed:
-    echo   1. Visual Studio 2022 with C++ workload
-    echo   2. Windows SDK
-    echo   3. Windows Driver Kit (WDK)
+    echo Requirements:
+    echo   1. Rust nightly (rustup install nightly)
+    echo   2. Windows target (rustup target add x86_64-pc-windows-msvc)
     echo.
 )
 

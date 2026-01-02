@@ -30,10 +30,10 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
 
   <PropertyGroup>
-    <NMakeBuildCommandLine>cargo +nightly build --release -Z build-std=core,alloc --target x86_64-pc-windows-msvc</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>cargo clean &amp;&amp; cargo +nightly build --release -Z build-std=core,alloc --target x86_64-pc-windows-msvc</NMakeReBuildCommandLine>
+    <NMakeBuildCommandLine>cargo +nightly build --release --target x86_64-pc-windows-msvc</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>cargo clean &amp;&amp; cargo +nightly build --release --target x86_64-pc-windows-msvc</NMakeReBuildCommandLine>
     <NMakeCleanCommandLine>cargo clean</NMakeCleanCommandLine>
-    <NMakeOutput>target\x86_64-pc-windows-msvc\release\externa_driver.sys</NMakeOutput>
+    <NMakeOutput>target\x86_64-pc-windows-msvc\release\externa_driver.dll</NMakeOutput>
     <OutDir>$(ProjectDir)target\x86_64-pc-windows-msvc\release\</OutDir>
     <IntDir>$(ProjectDir)target\</IntDir>
   </PropertyGroup>
@@ -49,9 +49,8 @@
 
   <ItemGroup>
     <None Include="src\lib.rs" />
+    <None Include="src\ntdef.rs" />
     <None Include="src\memory.rs" />
-    <None Include="src\process.rs" />
-    <None Include="src\communication.rs" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

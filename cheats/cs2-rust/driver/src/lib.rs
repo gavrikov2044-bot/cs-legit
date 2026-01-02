@@ -1,78 +1,49 @@
 //! Externa Kernel Driver
-//! Based on Valthrun Zenith Architecture
+//! Pure FFI implementation - No WDK crate dependency
 //! 
-//! Features:
-//! - Direct memory read via MmCopyVirtualMemory
-//! - CR3 Walking for stealth
-//! - Process protection bypass
+//! Build with:
+//! cargo +nightly build --release --target x86_64-pc-windows-msvc
 
 #![no_std]
-#![deny(unsafe_op_in_unsafe_fn)]
+#![no_main]
+#![allow(non_snake_case)]
+#![allow(non_camel_case_types)]
 
-extern crate alloc;
-
+mod ntdef;
 mod memory;
-mod process;
-mod communication;
 
-use wdk::println;
-use wdk_sys::{
-    ntddk::KeGetCurrentIrql,
-    DRIVER_OBJECT, NTSTATUS, PCUNICODE_STRING, PDRIVER_OBJECT,
-    STATUS_SUCCESS,
-};
+use core::panic::PanicInfo;
+use ntdef::*;
 
 /// Driver entry point
-#[export_name = "DriverEntry"]
-pub unsafe extern "system" fn driver_entry(
+#[no_mangle]
+pub unsafe extern "system" fn DriverEntry(
     driver: PDRIVER_OBJECT,
-    registry_path: PCUNICODE_STRING,
+    _registry_path: PUNICODE_STRING,
 ) -> NTSTATUS {
-    unsafe { driver_main(driver, registry_path) }
-}
-
-unsafe fn driver_main(
-    driver: PDRIVER_OBJECT,
-    _registry_path: PCUNICODE_STRING,
-) -> NTSTATUS {
-    println!("[Externa] Driver loading...");
-    
-    // Verify IRQL
-    let irql = unsafe { KeGetCurrentIrql() };
-    println!("[Externa] Current IRQL: {}", irql);
-    
-    // Initialize driver unload
+    // Set unload routine
     if !driver.is_null() {
-        unsafe {
-            (*driver).DriverUnload = Some(driver_unload);
-        }
+        (*driver).DriverUnload = Some(DriverUnload);
     }
     
-    // Initialize communication
-    if let Err(status) = communication::initialize(driver) {
-        println!("[Externa] Failed to initialize communication: 0x{:X}", status);
-        return status;
-    }
+    // Log success (via DbgPrint)
+    DbgPrint(b"[Externa] Driver loaded!\0".as_ptr() as *const i8);
     
-    println!("[Externa] Driver loaded successfully!");
     STATUS_SUCCESS
 }
 
-/// Driver unload handler
-unsafe extern "system" fn driver_unload(driver: PDRIVER_OBJECT) {
-    println!("[Externa] Driver unloading...");
-    communication::cleanup(driver);
-    println!("[Externa] Driver unloaded!");
+/// Driver unload
+unsafe extern "system" fn DriverUnload(_driver: PDRIVER_OBJECT) {
+    DbgPrint(b"[Externa] Driver unloaded!\0".as_ptr() as *const i8);
 }
 
-/// Panic handler for no_std
+/// Panic handler
 #[panic_handler]
-fn panic(info: &core::panic::PanicInfo) -> ! {
-    println!("[Externa] PANIC: {:?}", info);
+fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
-/// Allocator for no_std (required by alloc crate)
-#[global_allocator]
-static ALLOCATOR: wdk::allocator::WdkAllocator = wdk::allocator::WdkAllocator;
-
+// Kernel functions
+extern "system" {
+    fn DbgPrint(format: *const i8, ...) -> NTSTATUS;
+}
