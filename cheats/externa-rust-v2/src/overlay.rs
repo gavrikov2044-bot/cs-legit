@@ -68,7 +68,7 @@ impl D3D11Overlay {
                 WS_POPUP | WS_VISIBLE,
                 0, 0, 1920, 1080,
                 None, None, instance, None
-            );
+            )?;
             
             // DWM Transparency
             let margins = MARGINS { cxLeftWidth: -1, cxRightWidth: -1, cyTopHeight: -1, cyBottomHeight: -1 };
@@ -106,17 +106,17 @@ impl D3D11Overlay {
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                 None,
                 D3D11_SDK_VERSION,
-                &sc_desc,
-                &mut swap_chain,
-                &mut device,
+                Some(&sc_desc),
+                Some(&mut swap_chain),
+                Some(&mut device),
                 None,
-                &mut context
+                Some(&mut context)
             )?;
 
             let swap_chain = swap_chain.unwrap();
 
             // Init D2D1
-            let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, Some(&D2D1_FACTORY_TYPE_SINGLE_THREADED as *const _ as *const _))?;
+            let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
             
             let surface: IDXGISurface = swap_chain.GetBuffer(0)?;
             
@@ -156,8 +156,8 @@ impl D3D11Overlay {
 
                 draw_fn(&self.d2d_target, &self.brush);
 
-                self.d2d_target.EndDraw(None, None).unwrap_or(());
-                self.swap_chain.Present(1, 0).unwrap_or(());
+                let _ = self.d2d_target.EndDraw(None, None);
+                let _ = self.swap_chain.Present(1, DXGI_PRESENT(0));
             }
         }
     }

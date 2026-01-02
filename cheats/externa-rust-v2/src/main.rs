@@ -12,7 +12,7 @@ use memory::Memory;
 use overlay::D3D11Overlay;
 use windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F;
 use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget;
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, SendInput, INPUT, INPUT_MOUSE, MOUSEINPUT, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, SendInput, INPUT, INPUT_MOUSE, MOUSEINPUT, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, VIRTUAL_KEY};
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 use windows::Win32::Foundation::POINT;
 
@@ -145,7 +145,7 @@ fn main() -> anyhow::Result<()> {
     thread::spawn(move || {
         loop {
             let enabled = settings_trig.lock().unwrap().triggerbot_enabled;
-            if enabled && unsafe { GetAsyncKeyState(0x12) & 0x8000 != 0 } { // ALT Key
+            if enabled && unsafe { GetAsyncKeyState(VIRTUAL_KEY(0x12).0 as i32) & 0x8000 != 0 } { // ALT Key
                 let state = state_trig.lock().unwrap();
                 if state.local.crosshair_id > 0 {
                     unsafe { mouse_click(); }
@@ -169,7 +169,7 @@ fn main() -> anyhow::Result<()> {
         
         // --- INPUT HANDLING ---
         unsafe {
-            let insert_pressed = GetAsyncKeyState(0x2D) & 0x8000 != 0;
+            let insert_pressed = GetAsyncKeyState(VIRTUAL_KEY(0x2D).0 as i32) & 0x8000 != 0;
             if insert_pressed && !last_insert {
                 settings_guard.menu_open = !settings_guard.menu_open;
             }
@@ -249,7 +249,7 @@ fn main() -> anyhow::Result<()> {
                 let mut cy = my + 40.0;
                 let mut cursor = POINT::default();
                 GetCursorPos(&mut cursor);
-                let lmb_pressed = GetAsyncKeyState(0x01) & 0x8000 != 0;
+                let lmb_pressed = GetAsyncKeyState(VIRTUAL_KEY(0x01).0 as i32) & 0x8000 != 0;
                 let clicked = lmb_pressed && !last_lmb;
                 last_lmb = lmb_pressed;
 
