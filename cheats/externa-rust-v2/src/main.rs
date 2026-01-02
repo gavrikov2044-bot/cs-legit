@@ -97,11 +97,55 @@ fn main() -> Result<()> {
                 let ent_list: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_entity_list).unwrap_or(0);
                 
                 let mut should_log = false;
-                if last_debug.elapsed().as_secs() >= 5 {
+                if last_debug.elapsed().as_secs() >= 3 {
                     should_log = true;
-                    let local_ptr = mem_clone.read(mem_clone.client_base + offsets_clone.dw_local_player_controller).unwrap_or(0);
-                    info!("DEBUG: EntityListPtr=0x{:X} LocalCtrlPtr=0x{:X} Entities={}", ent_list, local_ptr, st.entities.len());
                     last_debug = std::time::Instant::now();
+                    
+                    // Детальные логи адресов
+                    let base = mem_clone.client_base;
+                    info!("=== DEBUG FRAME ===");
+                    info!("client_base = 0x{:X}", base);
+                    info!("dwEntityList offset = 0x{:X}, read addr = 0x{:X}", offsets_clone.dw_entity_list, base + offsets_clone.dw_entity_list);
+                    info!("dwLocalPlayerController offset = 0x{:X}, read addr = 0x{:X}", offsets_clone.dw_local_player_controller, base + offsets_clone.dw_local_player_controller);
+                    info!("dwViewMatrix offset = 0x{:X}, read addr = 0x{:X}", offsets_clone.dw_view_matrix, base + offsets_clone.dw_view_matrix);
+                    info!("EntityListPtr = 0x{:X}", ent_list);
+                    
+                    let local_ptr: usize = mem_clone.read(base + offsets_clone.dw_local_player_controller).unwrap_or(0);
+                    info!("LocalCtrlPtr = 0x{:X} (is_heap: {})", local_ptr, local_ptr > 0x10000000000);
+                    
+                    // Проверим первые 3 слота EntityList
+                    if ent_list != 0 {
+                        for test_i in 0..3 {
+                            let chunk_idx = (test_i & 0x7FFF) >> 9;
+                            let entry_idx = test_i & 0x1FF;
+                            let entry_addr = ent_list + 8 * chunk_idx + 16;
+                            let entry_val: usize = mem_clone.read(entry_addr).unwrap_or(0);
+                            
+                            if entry_val != 0 {
+                                // Пробуем оба варианта: шаг 8 и шаг 120
+                                let ctrl_8: usize = mem_clone.read(entry_val + 8 * entry_idx).unwrap_or(0);
+                                let ctrl_120: usize = mem_clone.read(entry_val + 120 * entry_idx).unwrap_or(0);
+                                
+                                info!("  Slot[{}]: entry_addr=0x{:X} entry_val=0x{:X}", test_i, entry_addr, entry_val);
+                                info!("    stride=8: ctrl=0x{:X} (is_heap: {})", ctrl_8, ctrl_8 > 0x10000000000);
+                                info!("    stride=120: ctrl=0x{:X} (is_heap: {})", ctrl_120, ctrl_120 > 0x10000000000);
+                                
+                                // Если нашли валидный контроллер, попробуем прочитать m_hPlayerPawn
+                                if ctrl_8 > 0x10000000000 {
+                                    let pawn_h: u32 = mem_clone.read(ctrl_8 + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
+                                    let health: i32 = mem_clone.read(ctrl_8 + game::offsets::netvars::M_I_HEALTH).unwrap_or(0);
+                                    info!("    [stride=8] pawn_handle=0x{:X}, health={}", pawn_h, health);
+                                }
+                                if ctrl_120 > 0x10000000000 {
+                                    let pawn_h: u32 = mem_clone.read(ctrl_120 + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
+                                    let health: i32 = mem_clone.read(ctrl_120 + game::offsets::netvars::M_I_HEALTH).unwrap_or(0);
+                                    info!("    [stride=120] pawn_handle=0x{:X}, health={}", pawn_h, health);
+                                }
+                            }
+                        }
+                    }
+                    info!("Entities found this frame: {}", st.entities.len());
+                    info!("===================");
                 }
 
                 if ent_list != 0 {
@@ -114,10 +158,6 @@ fn main() -> Result<()> {
                         if controller == 0 { continue; }
                         
                         let pawn_h: u32 = mem_clone.read(controller + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
-                        
-                        if should_log && i == 1 {
-                             info!("DEBUG Loop i=1: ListEntry=0x{:X} Controller=0x{:X} PawnHandle=0x{:X}", list_entry, controller, pawn_h);
-                        }
 
                         if pawn_h == 0 { continue; }
                         
