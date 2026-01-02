@@ -1,6 +1,7 @@
 mod memory;
 mod offsets;
 mod overlay;
+mod syscall;
 
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -9,19 +10,8 @@ use glam::{Vec3, Vec2};
 use log::info;
 
 use memory::Memory;
-use overlay::{ImGuiOverlay, RUNNING};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VIRTUAL_KEY};
-use imgui::*;
-
-// --- Config ---
-#[derive(Clone)]
-struct Settings {
-    menu_open: bool,
-    show_box: bool,
-    show_health: bool,
-    show_lines: bool,
-    team_check: bool,
-}
+use overlay::{Overlay, RUNNING};
+use std::sync::atomic::Ordering;
 
 // --- Game State ---
 struct GameState {
@@ -53,14 +43,6 @@ fn main() -> anyhow::Result<()> {
         view_matrix: [[0.0; 4]; 4],
         entities: Vec::new(),
         local_team: 0,
-    }));
-
-    let settings = Arc::new(Mutex::new(Settings {
-        menu_open: true,
-        show_box: true,
-        show_health: true,
-        show_lines: true,
-        team_check: true,
     }));
 
     // Memory Thread
@@ -118,40 +100,14 @@ fn main() -> anyhow::Result<()> {
     });
 
     // Overlay
-    let mut overlay = ImGuiOverlay::new()?;
-    info!("Overlay ready!");
+    let overlay = Overlay::new()?;
+    info!("Overlay ready! Press END to close.");
 
-    overlay.run(|ui| {
-        let mut settings = settings.lock().unwrap();
+    while RUNNING.load(Ordering::Relaxed) {
         let state = state.lock().unwrap();
 
-        // Toggle menu
-        unsafe {
-            if GetAsyncKeyState(VIRTUAL_KEY(0x2D).0 as i32) & 1 != 0 {
-                settings.menu_open = !settings.menu_open;
-            }
-        }
-
-        // Menu
-        if settings.menu_open {
-            Window::new("EXTERNA CS2")
-                .size([300.0, 350.0], Condition::FirstUseEver)
-                .position([50.0, 50.0], Condition::FirstUseEver)
-                .build(ui, || {
-                    ui.checkbox("Box ESP", &mut settings.show_box);
-                    ui.checkbox("Health Bar", &mut settings.show_health);
-                    ui.checkbox("Snaplines", &mut settings.show_lines);
-                    ui.checkbox("Team Check", &mut settings.team_check);
-                    ui.separator();
-                    ui.text(format!("Enemies: {}", state.entities.len()));
-                });
-        }
-
-        // ESP
-        let draw_list = ui.get_background_draw_list();
-
         for ent in &state.entities {
-            if settings.team_check && ent.team == state.local_team { continue; }
+            if ent.team == state.local_team { continue; }
 
             let feet_pos = ent.pos;
             let head_pos = Vec3::new(feet_pos.x, feet_pos.y, feet_pos.z + 72.0);
@@ -165,28 +121,19 @@ fn main() -> anyhow::Result<()> {
                 let x = head.x - w / 2.0;
                 let y = head.y;
 
-                let color = if ent.team == 2 {
-                    [1.0, 0.8, 0.0, 1.0] // T = yellow
-                } else {
-                    [0.2, 0.6, 1.0, 1.0] // CT = blue
-                };
+                let (r, g, b) = if ent.team == 2 { (255, 200, 0) } else { (50, 150, 255) };
 
-                if settings.show_box {
-                    draw_list.add_rect([x, y], [x + w, y + h], color).thickness(1.5).build();
-                }
+                overlay.draw_box(x, y, w, h, r, g, b);
 
-                if settings.show_health {
-                    let hp_h = (h * ent.health as f32) / 100.0;
-                    let hp_col = [1.0 - ent.health as f32 / 100.0, ent.health as f32 / 100.0, 0.0, 1.0];
-                    draw_list.add_rect_filled([x - 5.0, y + h - hp_h], [x - 2.0, y + h], hp_col);
-                }
-
-                if settings.show_lines {
-                    draw_list.add_line([960.0, 1080.0], [feet.x, feet.y], [1.0, 1.0, 1.0, 0.5]).thickness(1.0).build();
-                }
+                let hp_h = (h * ent.health as f32) / 100.0;
+                let hp_r = 255 - (ent.health as u8 * 255 / 100);
+                let hp_g = ent.health as u8 * 255 / 100;
+                overlay.draw_filled_rect(x - 5.0, y + h - hp_h, 3.0, hp_h, hp_r, hp_g, 0);
             }
         }
-    });
+
+        thread::sleep(Duration::from_millis(8));
+    }
 
     Ok(())
 }

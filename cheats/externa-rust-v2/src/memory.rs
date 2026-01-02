@@ -10,7 +10,7 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
     TH32CS_SNAPPROCESS, TH32CS_SNAPMODULE, PROCESSENTRY32W, MODULEENTRY32W,
 };
 
-mod syscall;
+use crate::syscall;
 
 // Wrapper for Send+Sync
 struct SendHandle(HANDLE);
