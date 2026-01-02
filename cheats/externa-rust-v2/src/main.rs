@@ -243,13 +243,18 @@ fn main() -> Result<()> {
                         let x = s_head.x - w / 2.0;
                         let y = s_head.y;
                         
-                        // Debug first enemy
+                        // Debug first enemy - full matrix dump
                         if !first_enemy_logged {
                             first_enemy_logged = true;
-                            info!("W2S Debug: pos=({:.0},{:.0},{:.0}) -> screen=({:.0},{:.0}) h={:.0}", 
-                                  ent.pos.x, ent.pos.y, ent.pos.z, s_head.x, s_head.y, h);
-                            info!("Matrix[0]: [{:.3},{:.3},{:.3},{:.3}]", 
-                                  st.view_matrix[0][0], st.view_matrix[0][1], st.view_matrix[0][2], st.view_matrix[0][3]);
+                            // Calculate clip coords for debug
+                            let clip_x = st.view_matrix[0][0] * ent.pos.x + st.view_matrix[0][1] * ent.pos.y + st.view_matrix[0][2] * ent.pos.z + st.view_matrix[0][3];
+                            let clip_y = st.view_matrix[1][0] * ent.pos.x + st.view_matrix[1][1] * ent.pos.y + st.view_matrix[1][2] * ent.pos.z + st.view_matrix[1][3];
+                            let clip_w = st.view_matrix[3][0] * ent.pos.x + st.view_matrix[3][1] * ent.pos.y + st.view_matrix[3][2] * ent.pos.z + st.view_matrix[3][3];
+                            
+                            info!("W2S: pos=({:.0},{:.0},{:.0}) clip_x={:.1} clip_y={:.1} clip_w={:.1} -> screen=({:.0},{:.0})", 
+                                  ent.pos.x, ent.pos.y, ent.pos.z, clip_x, clip_y, clip_w, s_head.x, s_head.y);
+                            info!("Matrix[3] (W row): [{:.3},{:.3},{:.3},{:.3}]", 
+                                  st.view_matrix[3][0], st.view_matrix[3][1], st.view_matrix[3][2], st.view_matrix[3][3]);
                         }
                         
                         if h > 5.0 && h < 500.0 {
