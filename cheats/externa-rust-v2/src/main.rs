@@ -42,65 +42,32 @@ fn main() -> Result<()> {
         thread::sleep(Duration::from_secs(1));
     };
 
-    // 3. Offsets - Try Pattern Scanner first, fallback to hardcoded
-    info!("Scanning for offsets with pattern scanner...");
+    // 3. Offsets - Use hardcoded from dump (scanner gave wrong results)
+    // Pattern scanner disabled - Set 3 gave wrong offsets (0x20256C0 vs 0x1D13CE8)
+    info!("Using HARDCODED offsets from dump (scanner disabled)...");
+    info!("  dwEntityList: 0x{:X}", game::offsets::DW_ENTITY_LIST);
+    info!("  dwLocalPlayerController: 0x{:X}", game::offsets::DW_LOCAL_PLAYER_CONTROLLER);
+    info!("  dwViewMatrix: 0x{:X}", game::offsets::DW_VIEW_MATRIX);
     
-    // Try multiple pattern sets
-    let pattern_sets = vec![
-        // Set 1: Common CS2 patterns
-        vec![
-            memory::scanner::Pattern::new("dwEntityList", "48 8B 0D ? ? ? ? 48 89 7C 24 ? 8B FA C1 EB", 3, 7),
-            memory::scanner::Pattern::new("dwLocalPlayerController", "48 8B 05 ? ? ? ? 48 85 C0 74 ? 8B 88", 3, 7),
-            memory::scanner::Pattern::new("dwViewMatrix", "48 8D 0D ? ? ? ? 48 C1 E0 06", 3, 7),
-        ],
-        // Set 2: Alternative patterns
-        vec![
-            memory::scanner::Pattern::new("dwEntityList", "48 8B 0D ? ? ? ? 48 85 C9 74 ? 44 0F B6 C2", 3, 7),
-            memory::scanner::Pattern::new("dwLocalPlayerController", "48 89 05 ? ? ? ? 48 85 C0 74 ? 49 8B 57", 3, 7),
-            memory::scanner::Pattern::new("dwViewMatrix", "48 8D 0D ? ? ? ? 48 8B D3 E8 ? ? ? ? 48 8B F8", 3, 7),
-        ],
-        // Set 3: Minimal patterns (more likely to match)
-        vec![
-            memory::scanner::Pattern::new("dwEntityList", "48 8B 0D ? ? ? ? 48 89 7C 24", 3, 7),
-            memory::scanner::Pattern::new("dwLocalPlayerController", "48 8B 05 ? ? ? ? 48 85 C0 74", 3, 7),
-            memory::scanner::Pattern::new("dwViewMatrix", "48 8D 0D ? ? ? ? 48 C1 E0", 3, 7),
-        ],
-    ];
+    let offsets = Arc::new(game::offsets::Offsets {
+        dw_entity_list: game::offsets::DW_ENTITY_LIST,
+        dw_local_player_controller: game::offsets::DW_LOCAL_PLAYER_CONTROLLER,
+        dw_view_matrix: game::offsets::DW_VIEW_MATRIX,
+    });
     
-    let mut scanned_offsets: Option<[usize; 3]> = None;
-    for (set_idx, patterns) in pattern_sets.iter().enumerate() {
-        info!("Trying pattern set {}...", set_idx + 1);
-        if let Ok(vals) = memory::scanner::scan_module(mem.pid, "client.dll", patterns) {
-            if vals.iter().all(|&v| v != 0) {
-                info!("Pattern set {} matched!", set_idx + 1);
-                scanned_offsets = Some([vals[0], vals[1], vals[2]]);
-                break;
-            }
-        }
+    // Verify offsets by reading and checking if values look valid
+    let test_ent_list: usize = mem.read(mem.client_base + offsets.dw_entity_list).unwrap_or(0);
+    let test_local: usize = mem.read(mem.client_base + offsets.dw_local_player_controller).unwrap_or(0);
+    info!("Verification:");
+    info!("  EntityList ptr: 0x{:X} (should be heap: {})", test_ent_list, test_ent_list > 0x10000000000);
+    info!("  LocalCtrl ptr: 0x{:X} (should be heap: {})", test_local, test_local > 0x10000000000);
+    
+    // If EntityList is not a heap pointer, offsets are wrong!
+    if test_ent_list < 0x10000000000 {
+        log::error!("WARNING: EntityList pointer looks WRONG! Offsets may be outdated.");
+        log::error!("Please update offsets in src/game/offsets.rs with fresh dump!");
     }
     
-    let offsets = match scanned_offsets {
-        Some(vals) => {
-            info!("Pattern scanner SUCCESS!");
-            info!("  dwEntityList: 0x{:X} (hardcoded: 0x{:X})", vals[0], game::offsets::DW_ENTITY_LIST);
-            info!("  dwLocalPlayerController: 0x{:X} (hardcoded: 0x{:X})", vals[1], game::offsets::DW_LOCAL_PLAYER_CONTROLLER);
-            info!("  dwViewMatrix: 0x{:X} (hardcoded: 0x{:X})", vals[2], game::offsets::DW_VIEW_MATRIX);
-            Arc::new(game::offsets::Offsets {
-                dw_entity_list: vals[0],
-                dw_local_player_controller: vals[1],
-                dw_view_matrix: vals[2],
-            })
-        },
-        None => {
-            info!("Pattern scanner FAILED, using hardcoded offsets from dump...");
-            Arc::new(game::offsets::Offsets {
-                dw_entity_list: game::offsets::DW_ENTITY_LIST,
-                dw_local_player_controller: game::offsets::DW_LOCAL_PLAYER_CONTROLLER,
-                dw_view_matrix: game::offsets::DW_VIEW_MATRIX,
-            })
-        }
-    };
-
     // 4. Shared State
     let state = Arc::new(Mutex::new(GameState {
         view_matrix: [[0.0; 4]; 4],
@@ -159,48 +126,51 @@ fn main() -> Result<()> {
                     info!("dwEntityList offset = 0x{:X}, read addr = 0x{:X}", offsets_clone.dw_entity_list, base + offsets_clone.dw_entity_list);
                     info!("dwLocalPlayerController offset = 0x{:X}, read addr = 0x{:X}", offsets_clone.dw_local_player_controller, base + offsets_clone.dw_local_player_controller);
                     info!("dwViewMatrix offset = 0x{:X}, read addr = 0x{:X}", offsets_clone.dw_view_matrix, base + offsets_clone.dw_view_matrix);
-                    info!("EntityListPtr = 0x{:X}", ent_list);
+                    info!("EntityListPtr = 0x{:X} (is_heap: {})", ent_list, ent_list > 0x10000000000);
                     
                     let local_ptr: usize = mem_clone.read(base + offsets_clone.dw_local_player_controller).unwrap_or(0);
                     info!("LocalCtrlPtr = 0x{:X} (is_heap: {})", local_ptr, local_ptr > 0x10000000000);
                     
-                    // Проверим первые 3 слота EntityList
-                    if ent_list != 0 {
-                        for test_i in 0..3 {
-                            let chunk_idx = (test_i & 0x7FFF) >> 9;
-                            let entry_idx = test_i & 0x1FF;
-                            let entry_addr = ent_list + 8 * chunk_idx + 16;
-                            let entry_val: usize = mem_clone.read(entry_addr).unwrap_or(0);
-                            
-                            if entry_val != 0 {
-                                // Пробуем все варианты: шаг 8, 116, 120
-                                let ctrl_8: usize = mem_clone.read(entry_val + 8 * entry_idx).unwrap_or(0);
-                                let ctrl_116: usize = mem_clone.read(entry_val + 116 * entry_idx).unwrap_or(0);
-                                let ctrl_120: usize = mem_clone.read(entry_val + 120 * entry_idx).unwrap_or(0);
+                    // Dump first 64 bytes of EntityList to understand structure
+                    if ent_list > 0x10000000000 {
+                        info!("--- EntityList structure (first 64 bytes) ---");
+                        for off in (0..64).step_by(8) {
+                            let val: usize = mem_clone.read(ent_list + off).unwrap_or(0);
+                            info!("  +0x{:02X}: 0x{:016X}", off, val);
+                        }
+                        
+                        // Try reading chunk at offset +16 (standard)
+                        let chunk0: usize = mem_clone.read(ent_list + 16).unwrap_or(0);
+                        info!("--- Chunk[0] at ent_list+16 = 0x{:X} ---", chunk0);
+                        
+                        if chunk0 > 0x10000000000 {
+                            // Dump first 5 entities from chunk
+                            info!("--- Entities in Chunk[0] (testing strides) ---");
+                            for i in 1..6 {
+                                let e_8: usize = mem_clone.read(chunk0 + 8 * i).unwrap_or(0);
+                                let e_116: usize = mem_clone.read(chunk0 + 116 * i).unwrap_or(0);
+                                let e_120: usize = mem_clone.read(chunk0 + 120 * i).unwrap_or(0);
                                 
-                                info!("  Slot[{}]: entry_addr=0x{:X} entry_val=0x{:X}", test_i, entry_addr, entry_val);
-                                info!("    stride=8: ctrl=0x{:X} (is_heap: {})", ctrl_8, ctrl_8 > 0x10000000000);
-                                info!("    stride=116: ctrl=0x{:X} (is_heap: {})", ctrl_116, ctrl_116 > 0x10000000000);
-                                info!("    stride=120: ctrl=0x{:X} (is_heap: {})", ctrl_120, ctrl_120 > 0x10000000000);
+                                info!("  Entity[{}]:", i);
+                                info!("    stride=8:   0x{:X} (heap: {})", e_8, e_8 > 0x10000000000);
+                                info!("    stride=116: 0x{:X} (heap: {})", e_116, e_116 > 0x10000000000);
+                                info!("    stride=120: 0x{:X} (heap: {})", e_120, e_120 > 0x10000000000);
                                 
-                                // Если нашли валидный контроллер, попробуем прочитать m_hPlayerPawn
-                                if ctrl_8 > 0x10000000000 {
-                                    let pawn_h: u32 = mem_clone.read(ctrl_8 + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
-                                    let health: i32 = mem_clone.read(ctrl_8 + game::offsets::netvars::M_I_HEALTH).unwrap_or(0);
-                                    info!("    [stride=8] pawn_handle=0x{:X}, health={}", pawn_h, health);
-                                }
-                                if ctrl_116 > 0x10000000000 {
-                                    let pawn_h: u32 = mem_clone.read(ctrl_116 + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
-                                    let health: i32 = mem_clone.read(ctrl_116 + game::offsets::netvars::M_I_HEALTH).unwrap_or(0);
-                                    info!("    [stride=116] pawn_handle=0x{:X}, health={}", pawn_h, health);
-                                }
-                                if ctrl_120 > 0x10000000000 {
-                                    let pawn_h: u32 = mem_clone.read(ctrl_120 + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
-                                    let health: i32 = mem_clone.read(ctrl_120 + game::offsets::netvars::M_I_HEALTH).unwrap_or(0);
-                                    info!("    [stride=120] pawn_handle=0x{:X}, health={}", pawn_h, health);
+                                // For valid heap pointers, try reading pawn handle
+                                for (stride, ptr) in [(8, e_8), (116, e_116), (120, e_120)] {
+                                    if ptr > 0x10000000000 {
+                                        let pawn_h: u32 = mem_clone.read(ptr + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
+                                        if pawn_h != 0 {
+                                            info!("      [stride={}] FOUND pawn_handle=0x{:X}", stride, pawn_h);
+                                        }
+                                    }
                                 }
                             }
+                        } else {
+                            info!("  Chunk[0] is NOT a heap pointer - structure may be different!");
                         }
+                    } else {
+                        info!("EntityListPtr is NOT a heap pointer! Offsets are WRONG!");
                     }
                     info!("Entities found this frame: {}", st.entities.len());
                     info!("===================");
