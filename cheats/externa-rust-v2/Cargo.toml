@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 glam = "0.29"
+anyhow = "1.0"
 log = "0.4"
 env_logger = "0.11"
 

@@ -7,9 +7,8 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, RegisterClassExW, DefWindowProcW, ShowWindow,
-    TranslateMessage, DispatchMessageW, PeekMessageW,
     WS_EX_TOPMOST, WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
-    PM_REMOVE, WM_QUIT, WNDCLASSEXW, CS_HREDRAW, CS_VREDRAW, MSG,
+    WM_QUIT, WNDCLASSEXW, CS_HREDRAW, CS_VREDRAW,
     SW_SHOWDEFAULT, SetLayeredWindowAttributes, LWA_ALPHA,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
