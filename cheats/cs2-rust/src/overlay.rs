@@ -11,7 +11,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM, RECT, BOOL};
 use windows::Win32::Graphics::Gdi::{
     CreateSolidBrush, CreatePen, SelectObject, DeleteObject,
     Rectangle, FillRect, SetBkMode, TRANSPARENT, SetTextColor,
-    GetDC, ReleaseDC, InvalidateRect, CreateFontW, DrawTextW,
+    GetDC, ReleaseDC, InvalidateRect, CreateFontW, DrawTextW, UpdateWindow,
     PS_SOLID, GetStockObject, NULL_BRUSH, HRGN, HGDIOBJ, DT_CENTER, DT_VCENTER, DT_SINGLELINE,
     FW_BOLD, FONT_CHARSET, FONT_OUTPUT_PRECISION, FONT_CLIP_PRECISION, FONT_QUALITY,
 };
@@ -223,10 +223,16 @@ impl Overlay {
         }
         
         if settings.menu_open {
+            log::debug!("Drawing menu at ({}, {})", self.width / 2 - 200, self.height / 2 - 150);
             self.draw_menu(hdc);
         }
         
         unsafe { ReleaseDC(Some(self.hwnd), hdc); }
+        
+        // Force window update
+        unsafe {
+            let _ = windows::Win32::Graphics::Gdi::UpdateWindow(self.hwnd);
+        }
     }
     
     fn draw_rect(&self, hdc: windows::Win32::Graphics::Gdi::HDC, x: f32, y: f32, w: f32, h: f32, color: Color, thickness: i32) {
