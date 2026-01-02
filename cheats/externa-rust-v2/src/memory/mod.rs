@@ -3,7 +3,6 @@ pub mod scanner;
 pub mod syscall;
 
 use std::sync::Arc;
-use windows::Win32::Foundation::HANDLE;
 
 #[derive(Clone)]
 pub struct Memory {

@@ -1,4 +1,5 @@
-use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget_Impl; // Import trait for method call syntax
+use anyhow::Result;
+use windows::core::{HSTRING, Interface};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct2D::{ID2D1RenderTarget, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
     D2D1CreateFactory, D2D1_FACTORY_TYPE_SINGLE_THREADED,
@@ -9,7 +10,7 @@ use windows::Win32::Graphics::Direct2D::{ID2D1RenderTarget, ID2D1Factory, ID2D1H
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Direct2D::Common::{D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT, D2D1_COLOR_F, D2D_SIZE_U}; // Added D2D_SIZE_U
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClientRect, CreateWindowExW, RegisterClassExW, DefWindowProcW, ShowWindow,
+    CreateWindowExW, RegisterClassExW, DefWindowProcW, ShowWindow,
     WS_EX_TOPMOST, WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_EX_NOACTIVATE, WS_POPUP, WS_VISIBLE,
     WNDCLASSEXW, CS_HREDRAW, CS_VREDRAW, SW_SHOWDEFAULT, SetLayeredWindowAttributes, LWA_ALPHA,
     PeekMessageW, TranslateMessage, DispatchMessageW, PM_REMOVE, MSG,

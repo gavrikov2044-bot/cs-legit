@@ -7,7 +7,7 @@ use std::thread;
 use std::time::Duration;
 use anyhow::Result;
 use glam::Vec3;
-use log::{info, error};
+use log::info;
 use crate::memory::handle::ProcessReader; // This is now correctly imported from the trait definition
 
 // Global Game State
