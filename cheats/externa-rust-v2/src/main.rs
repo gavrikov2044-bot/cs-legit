@@ -10,7 +10,7 @@ use log::{info, error};
 
 use memory::Memory;
 use overlay::D3D11Overlay;
-use windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F;
+use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_ELLIPSE, D2D_POINT_2F, D2D_RECT_F};
 use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, SendInput, INPUT, INPUT_MOUSE, MOUSEINPUT, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, VIRTUAL_KEY};
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
@@ -230,7 +230,7 @@ fn main() -> anyhow::Result<()> {
 
                 // Background
                 brush.SetColor(&D2D1_COLOR_F { r: 0.1, g: 0.1, b: 0.1, a: 0.95 });
-                let bg = windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F { left: mx, top: my, right: mx+mw, bottom: my+mh };
+                let bg = D2D_RECT_F { left: mx, top: my, right: mx+mw, bottom: my+mh };
                 target.FillRectangle(&bg, brush);
                 
                 brush.SetColor(&D2D1_COLOR_F { r: 0.0, g: 0.5, b: 1.0, a: 1.0 });
@@ -255,7 +255,7 @@ fn main() -> anyhow::Result<()> {
 
                 for (label, val) in items {
                     // Checkbox logic
-                    let cb_rect = windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F { left: mx+20.0, top: cy, right: mx+35.0, bottom: cy+15.0 };
+                    let cb_rect = D2D_RECT_F { left: mx+20.0, top: cy, right: mx+35.0, bottom: cy+15.0 };
                     
                     // Interaction
                     if clicked && 

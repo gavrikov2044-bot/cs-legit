@@ -2,30 +2,29 @@ use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use windows::core::{Interface, w, Result, PCWSTR};
 use windows::Win32::Foundation::{HWND, RECT, BOOL, LPARAM, WPARAM, LRESULT};
-use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_SWAP_CHAIN_DESC, DXGI_SWAP_EFFECT_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGISurface};
+use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_SWAP_CHAIN_DESC, DXGI_SWAP_EFFECT_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGISurface, DXGI_PRESENT};
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_MODE_DESC, DXGI_RATIONAL};
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDeviceAndSwapChain, ID3D11Device, ID3D11DeviceContext, ID3D11RenderTargetView, 
-    D3D11_SDK_VERSION, D3D_DRIVER_TYPE_HARDWARE, D3D11_CREATE_DEVICE_FLAG, ID3D11Texture2D,
-    D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+    D3D11CreateDeviceAndSwapChain, ID3D11Device, ID3D11DeviceContext,
+    D3D11_SDK_VERSION, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
 };
+use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1Factory, ID2D1RenderTarget, ID2D1SolidColorBrush,
-    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_RENDER_TARGET_PROPERTIES, D2D1_PIXEL_FORMAT,
-    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_DEBUG_LEVEL_NONE, D2D1_RENDER_TARGET_TYPE_DEFAULT,
+    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_RENDER_TARGET_PROPERTIES,
+    D2D1_DEBUG_LEVEL_NONE, D2D1_RENDER_TARGET_TYPE_DEFAULT,
     D2D1_RENDER_TARGET_USAGE_NONE, D2D1_FEATURE_LEVEL_DEFAULT,
 };
-use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_ALPHA_MODE_IGNORE};
+use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, RegisterClassExW, DefWindowProcW, ShowWindow, SetLayeredWindowAttributes,
-    TranslateMessage, DispatchMessageW, PeekMessageW, PostQuitMessage,
+    CreateWindowExW, RegisterClassExW, DefWindowProcW, ShowWindow,
+    TranslateMessage, DispatchMessageW, PeekMessageW,
     WS_EX_TOPMOST, WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE, 
     PM_REMOVE, WM_QUIT, WNDCLASSEXW, CS_HREDRAW, CS_VREDRAW, MSG,
-    GWL_EXSTYLE, SetWindowLongPtrW, GetWindowLongPtrW, LWA_COLORKEY,
     SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::Graphics::Dwm::{DwmExtendFrameIntoClientArea, DWM_BLURBEHIND, DWM_BB_ENABLE, DwmEnableBlurBehindWindow};
+use windows::Win32::Graphics::Dwm::{DwmExtendFrameIntoClientArea};
 use windows::Win32::UI::Controls::MARGINS;
 
 pub struct D3D11Overlay {
@@ -70,14 +69,10 @@ impl D3D11Overlay {
                 None, None, instance, None
             )?;
             
-            // DWM Transparency
             let margins = MARGINS { cxLeftWidth: -1, cxRightWidth: -1, cyTopHeight: -1, cyBottomHeight: -1 };
-            DwmExtendFrameIntoClientArea(hwnd, &margins)?;
-            
-            // Stream Proof
+            let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
             let _ = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
 
-            // Init D3D11
             let sc_desc = DXGI_SWAP_CHAIN_DESC {
                 BufferDesc: DXGI_MODE_DESC {
                     Width: 1920,
@@ -115,9 +110,7 @@ impl D3D11Overlay {
 
             let swap_chain = swap_chain.unwrap();
 
-            // Init D2D1
             let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
-            
             let surface: IDXGISurface = swap_chain.GetBuffer(0)?;
             
             let props = D2D1_RENDER_TARGET_PROPERTIES {
