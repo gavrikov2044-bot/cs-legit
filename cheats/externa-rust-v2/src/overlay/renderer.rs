@@ -1,9 +1,9 @@
 use windows::core::{Result, HSTRING, Interface}; // Added Interface trait for cast()
-use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Foundation::{HWND, RECT, SIZE};
 use windows::Win32::Graphics::Direct2D::{ID2D1RenderTarget, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
     D2D1CreateFactory, D2D1_FACTORY_TYPE_SINGLE_THREADED,
     D2D1_RENDER_TARGET_PROPERTIES, D2D1_HWND_RENDER_TARGET_PROPERTIES,
-    D2D1_SIZE_U, D2D1_PRESENT_OPTIONS_NONE, D2D1_DEBUG_LEVEL_NONE, // REMOVED PIXEL_FORMAT (MOVED TO COMMON)
+    D2D1_PRESENT_OPTIONS_NONE, D2D1_DEBUG_LEVEL_NONE,
     D2D1_FACTORY_OPTIONS,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -86,9 +86,9 @@ impl Direct2DOverlay {
             
             // Create Brushes (cast target to ID2D1RenderTarget trait interface)
             let render_target: ID2D1RenderTarget = target.cast()?;
-            // Explicitly use the trait method
-            let brush_enemy = ID2D1RenderTarget::CreateSolidColorBrush(&render_target, &D2D1_COLOR_F { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, None)?;
-            let brush_team = ID2D1RenderTarget::CreateSolidColorBrush(&render_target, &D2D1_COLOR_F { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, None)?;
+            // Call method on the interface directly (no static call needed, just method call)
+            let brush_enemy = render_target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, None)?;
+            let brush_team = render_target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, None)?;
 
             Ok(Self { hwnd, factory, target, brush_enemy, brush_team, width, height })
         }
