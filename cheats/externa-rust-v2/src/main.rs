@@ -173,12 +173,14 @@ fn main() -> Result<()> {
                             let entry_val: usize = mem_clone.read(entry_addr).unwrap_or(0);
                             
                             if entry_val != 0 {
-                                // Пробуем оба варианта: шаг 8 и шаг 120
+                                // Пробуем все варианты: шаг 8, 116, 120
                                 let ctrl_8: usize = mem_clone.read(entry_val + 8 * entry_idx).unwrap_or(0);
+                                let ctrl_116: usize = mem_clone.read(entry_val + 116 * entry_idx).unwrap_or(0);
                                 let ctrl_120: usize = mem_clone.read(entry_val + 120 * entry_idx).unwrap_or(0);
                                 
                                 info!("  Slot[{}]: entry_addr=0x{:X} entry_val=0x{:X}", test_i, entry_addr, entry_val);
                                 info!("    stride=8: ctrl=0x{:X} (is_heap: {})", ctrl_8, ctrl_8 > 0x10000000000);
+                                info!("    stride=116: ctrl=0x{:X} (is_heap: {})", ctrl_116, ctrl_116 > 0x10000000000);
                                 info!("    stride=120: ctrl=0x{:X} (is_heap: {})", ctrl_120, ctrl_120 > 0x10000000000);
                                 
                                 // Если нашли валидный контроллер, попробуем прочитать m_hPlayerPawn
@@ -186,6 +188,11 @@ fn main() -> Result<()> {
                                     let pawn_h: u32 = mem_clone.read(ctrl_8 + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
                                     let health: i32 = mem_clone.read(ctrl_8 + game::offsets::netvars::M_I_HEALTH).unwrap_or(0);
                                     info!("    [stride=8] pawn_handle=0x{:X}, health={}", pawn_h, health);
+                                }
+                                if ctrl_116 > 0x10000000000 {
+                                    let pawn_h: u32 = mem_clone.read(ctrl_116 + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
+                                    let health: i32 = mem_clone.read(ctrl_116 + game::offsets::netvars::M_I_HEALTH).unwrap_or(0);
+                                    info!("    [stride=116] pawn_handle=0x{:X}, health={}", pawn_h, health);
                                 }
                                 if ctrl_120 > 0x10000000000 {
                                     let pawn_h: u32 = mem_clone.read(ctrl_120 + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
