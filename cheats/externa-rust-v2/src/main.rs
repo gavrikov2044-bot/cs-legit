@@ -42,19 +42,12 @@ fn main() -> Result<()> {
         thread::sleep(Duration::from_secs(1));
     };
 
-    // 3. Pattern Scan
-    info!("Scanning patterns...");
-    let patterns = vec![
-        memory::scanner::Pattern::new("EntityList", "48 8B 0D ? ? ? ? 48 89 7C 24", 3, 7),
-        memory::scanner::Pattern::new("LocalController", "48 83 3D ? ? ? ? ? 0F 95", 3, 8),
-        memory::scanner::Pattern::new("ViewMatrix", "48 8D 0D ? ? ? ? 48 C1 E0 06", 3, 7),
-    ];
-    
-    let offsets_results = memory::scanner::scan_module(mem.pid, "client.dll", &patterns)?;
+    // 3. Offsets (From Dump)
+    info!("Using hardcoded offsets from dump (2026-01-02)...");
     let offsets = Arc::new(game::offsets::Offsets {
-        dw_entity_list: offsets_results[0],
-        dw_local_player_controller: offsets_results[1],
-        dw_view_matrix: offsets_results[2],
+        dw_entity_list: game::offsets::DW_ENTITY_LIST,
+        dw_local_player_controller: game::offsets::DW_LOCAL_PLAYER_CONTROLLER,
+        dw_view_matrix: game::offsets::DW_VIEW_MATRIX,
     });
 
     // 4. Shared State
@@ -102,7 +95,9 @@ fn main() -> Result<()> {
                 st.entities.clear();
                 let ent_list: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_entity_list).unwrap_or(0);
                 
+                let mut should_log = false;
                 if last_debug.elapsed().as_secs() >= 5 {
+                    should_log = true;
                     let local_ptr = mem_clone.read(mem_clone.client_base + offsets_clone.dw_local_player_controller).unwrap_or(0);
                     info!("DEBUG: EntityListPtr=0x{:X} LocalCtrlPtr=0x{:X} Entities={}", ent_list, local_ptr, st.entities.len());
                     last_debug = std::time::Instant::now();
@@ -117,6 +112,11 @@ fn main() -> Result<()> {
                         if controller == 0 { continue; }
                         
                         let pawn_h: u32 = mem_clone.read(controller + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
+                        
+                        if should_log && i == 1 {
+                             info!("DEBUG Loop i=1: ListEntry=0x{:X} Controller=0x{:X} PawnHandle=0x{:X}", list_entry, controller, pawn_h);
+                        }
+
                         if pawn_h == 0 { continue; }
                         
                         let list_entry2: usize = mem_clone.read(ent_list + 8 * ((pawn_h as usize & 0x7FFF) >> 9) + 16).unwrap_or(0);
