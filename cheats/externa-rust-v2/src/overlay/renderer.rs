@@ -78,7 +78,7 @@ impl Direct2DOverlay {
             };
             let hwnd_props = D2D1_HWND_RENDER_TARGET_PROPERTIES {
                 hwnd,
-                pixelSize: D2D1_SIZE_U { width, height },
+                pixelSize: SIZE { cx: width as i32, cy: height as i32 }, // Use SIZE instead of D2D1_SIZE_U
                 presentOptions: D2D1_PRESENT_OPTIONS_NONE,
             };
 
@@ -86,8 +86,9 @@ impl Direct2DOverlay {
             
             // Create Brushes (cast target to ID2D1RenderTarget trait interface)
             let render_target: ID2D1RenderTarget = target.cast()?;
-            let brush_enemy = render_target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, None)?;
-            let brush_team = render_target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, None)?;
+            // Explicitly use the trait method
+            let brush_enemy = ID2D1RenderTarget::CreateSolidColorBrush(&render_target, &D2D1_COLOR_F { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, None)?;
+            let brush_team = ID2D1RenderTarget::CreateSolidColorBrush(&render_target, &D2D1_COLOR_F { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, None)?;
 
             Ok(Self { hwnd, factory, target, brush_enemy, brush_team, width, height })
         }
