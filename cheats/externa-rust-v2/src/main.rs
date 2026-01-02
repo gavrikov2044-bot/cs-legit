@@ -79,7 +79,7 @@ fn main() -> Result<()> {
     let mem_clone = mem.clone();
     let state_clone = state.clone();
     let offsets_clone = offsets.clone();
-    
+
     thread::spawn(move || {
         info!("Memory thread started.");
         let mut last_debug = std::time::Instant::now();
@@ -99,7 +99,7 @@ fn main() -> Result<()> {
                      
                      if ent_list != 0 && pawn_h != 0 && pawn_h != 0xFFFFFFFF {
                          let entry: usize = mem_clone.read(ent_list + 8 * ((pawn_h as usize & 0x7FFF) >> 9) + 16).unwrap_or(0);
-                         if entry != 0 {
+                        if entry != 0 {
                              // CEntityIdentity: stride=120, entity pointer at +0x08
                              let pawn: usize = mem_clone.read(entry + 120 * (pawn_h as usize & 0x1FF) + 8).unwrap_or(0);
                              if pawn != 0 && pawn < 0x7FF000000000 {
@@ -144,29 +144,34 @@ fn main() -> Result<()> {
                         info!("--- Chunk[0] at ent_list+16 = 0x{:X} ---", chunk0);
                         
                         if chunk0 > 0x10000000000 {
-                            // CEntityIdentity structure is 120 bytes:
-                            // +0x00: vtable (module address)
-                            // +0x08: entity pointer (heap address) ← we need this!
-                            // +0x10: handle, flags, etc.
-                            info!("--- Testing CEntityIdentity structure (stride=120, entity at +0x08) ---");
-                            for i in 1..6 {
-                                // Read first field (vtable) and second field (entity ptr)
-                                let vtable: usize = mem_clone.read(chunk0 + 120 * i).unwrap_or(0);
-                                let entity_ptr: usize = mem_clone.read(chunk0 + 120 * i + 8).unwrap_or(0);
+                            // Dump first 256 bytes of Chunk to understand structure
+                            info!("--- RAW DUMP of Chunk[0] (first 256 bytes) ---");
+                            for off in (0..256).step_by(8) {
+                                let val: usize = mem_clone.read(chunk0 + off).unwrap_or(0);
+                                let is_module = val >= 0x7FF000000000 && val < 0x800000000000;
+                                let is_heap = val > 0x10000000000 && val < 0x7FF000000000;
+                                let marker = if is_module { " [MODULE]" } else if is_heap { " [HEAP]" } else { "" };
+                                info!("  +0x{:03X}: 0x{:016X}{}", off, val, marker);
+                            }
+                            
+                            // The chunk might be directly array of pointers to entities
+                            // Try reading chunk[i] directly (stride=8) and check what we get
+                            info!("--- Testing direct pointer array (stride=8) ---");
+                            for i in 0..10 {
+                                let ptr: usize = mem_clone.read(chunk0 + 8 * i).unwrap_or(0);
+                                let is_heap = ptr > 0x10000000000 && ptr < 0x7FF000000000;
                                 
-                                let is_valid_entity = entity_ptr > 0x10000000000 && entity_ptr < 0x7FF000000000;
-                                
-                                info!("  Entity[{}]: vtable=0x{:X}, entity_ptr=0x{:X} (valid: {})", 
-                                      i, vtable, entity_ptr, is_valid_entity);
-                                
-                                if is_valid_entity {
-                                    // Try to read pawn handle from entity
-                                    let pawn_h: u32 = mem_clone.read(entity_ptr + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
-                                    let health: i32 = mem_clone.read(entity_ptr + game::offsets::netvars::M_I_HEALTH).unwrap_or(0);
-                                    info!("    -> pawn_handle=0x{:X}, health={}", pawn_h, health);
+                                if ptr != 0 {
+                                    info!("  chunk[{}] = 0x{:X} (heap: {})", i, ptr, is_heap);
                                     
-                                    if pawn_h != 0 && pawn_h != 0xFFFFFFFF {
-                                        info!("    *** VALID PLAYER FOUND! ***");
+                                    if is_heap {
+                                        // Try to read m_hPlayerPawn at various offsets
+                                        for pawn_off in [0x8FC, 0x7E4, 0x7E8, 0x7EC, 0x800] {
+                                            let pawn_h: u32 = mem_clone.read(ptr + pawn_off).unwrap_or(0);
+                                            if pawn_h != 0 && pawn_h != 0xFFFFFFFF && pawn_h < 0x10000 {
+                                                info!("    +0x{:X}: pawn_handle = 0x{:X}", pawn_off, pawn_h);
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -180,7 +185,7 @@ fn main() -> Result<()> {
                     info!("===================");
                 }
 
-                if ent_list != 0 {
+                    if ent_list != 0 {
                     for i in 1..64 {
                         let list_entry: usize = mem_clone.read(ent_list + 8 * ((i & 0x7FFF) >> 9) + 16).unwrap_or(0);
                         if list_entry == 0 { continue; }
