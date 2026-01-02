@@ -57,6 +57,8 @@ fn main() -> anyhow::Result<()> {
 
     thread::spawn(move || {
         info!("Memory thread started");
+        let mut debug_counter = 0u32;
+        
         loop {
             if !RUNNING.load(Ordering::Relaxed) { break; }
             
@@ -64,12 +66,18 @@ fn main() -> anyhow::Result<()> {
                 st.view_matrix = mem_clone.read(mem_clone.client_base + offsets::client::DW_VIEW_MATRIX);
 
                 let local: u64 = mem_clone.read(mem_clone.client_base + offsets::client::DW_LOCAL_PLAYER_CONTROLLER);
+                let ent_list: u64 = mem_clone.read(mem_clone.client_base + offsets::client::DW_ENTITY_LIST);
+                
+                // Debug log every 500 ticks
+                debug_counter += 1;
+                let should_log = debug_counter % 500 == 1;
+                
                 if local != 0 {
                     let pawn_h: u32 = mem_clone.read(local + offsets::offsets::M_H_PLAYER_PAWN);
-                    let ent_list: u64 = mem_clone.read(mem_clone.client_base + offsets::client::DW_ENTITY_LIST);
 
                     if ent_list != 0 && pawn_h != 0 {
-                        let entry: u64 = mem_clone.read(ent_list + 8 * ((pawn_h as u64 & 0x7FFF) >> 9) + 16);
+                        // Formula: (8 * (handle & 0x7FFF) >> 9) - multiply first, then shift!
+                        let entry: u64 = mem_clone.read(ent_list + ((8 * (pawn_h as u64 & 0x7FFF)) >> 9) + 16);
                         if entry != 0 {
                             let pawn: u64 = mem_clone.read(entry + 120 * (pawn_h as u64 & 0x1FF));
                             if pawn != 0 {
@@ -79,26 +87,34 @@ fn main() -> anyhow::Result<()> {
                     }
 
                     st.entities.clear();
+                    
+                    let mut found_ctrl = 0;
+                    let mut found_pawn = 0;
+                    let mut found_hp = 0;
 
                     if ent_list != 0 {
                         for i in 1u64..64 {
-                            let le: u64 = mem_clone.read(ent_list + 8 * ((i & 0x7FFF) >> 9) + 16);
+                            // Formula: (8 * (i & 0x7FFF) >> 9) - multiply first, then shift!
+                            let le: u64 = mem_clone.read(ent_list + ((8 * (i & 0x7FFF)) >> 9) + 16);
                             if le == 0 { continue; }
 
                             let ctrl: u64 = mem_clone.read(le + 120 * (i & 0x1FF));
                             if ctrl == 0 { continue; }
+                            found_ctrl += 1;
 
                             let ph: u32 = mem_clone.read(ctrl + offsets::offsets::M_H_PLAYER_PAWN);
                             if ph == 0 { continue; }
 
-                            let le2: u64 = mem_clone.read(ent_list + 8 * ((ph as u64 & 0x7FFF) >> 9) + 16);
+                            let le2: u64 = mem_clone.read(ent_list + ((8 * (ph as u64 & 0x7FFF)) >> 9) + 16);
                             if le2 == 0 { continue; }
                             
                             let pawn: u64 = mem_clone.read(le2 + 120 * (ph as u64 & 0x1FF));
                             if pawn == 0 { continue; }
+                            found_pawn += 1;
 
                             let hp: i32 = mem_clone.read(pawn + offsets::offsets::M_I_HEALTH);
                             if hp <= 0 || hp > 100 { continue; }
+                            found_hp += 1;
 
                             let team: i32 = mem_clone.read(pawn + offsets::offsets::M_I_TEAM_NUM);
 
@@ -109,6 +125,11 @@ fn main() -> anyhow::Result<()> {
 
                             st.entities.push(Entity { pos, health: hp, team });
                         }
+                    }
+                    
+                    if should_log {
+                        info!("DEBUG: local=0x{:X} list=0x{:X} ctrl={} pawn={} hp={}", 
+                              local, ent_list, found_ctrl, found_pawn, found_hp);
                     }
                 }
             }

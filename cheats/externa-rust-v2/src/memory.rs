@@ -72,25 +72,19 @@ impl Memory {
         unsafe {
             let mut buffer = std::mem::zeroed::<T>();
 
-            // Try Syscall
-            if syscall::is_active() {
-                let status = syscall::nt_read(
-                    self.handle.0.0 as _,
-                    address as _,
-                    &mut buffer as *mut _ as *mut _,
-                    size_of::<T>()
-                );
-                if status == 0 { return buffer; }
-            }
-
-            // Fallback WinAPI
-            let _ = ReadProcessMemory(
+            // Use WinAPI directly for now (syscall disabled for testing)
+            let result = ReadProcessMemory(
                 self.handle.0,
                 address as *const c_void,
                 &mut buffer as *mut _ as *mut c_void,
                 size_of::<T>(),
                 None
             );
+            
+            if result.is_err() && address != 0 {
+                // Silent fail - return zeroed
+            }
+            
             buffer
         }
     }
