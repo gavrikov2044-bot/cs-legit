@@ -1,5 +1,5 @@
 use anyhow::Result;
-use windows::core::{Result, HSTRING, Interface};
+use windows::core::{HSTRING, Interface}; // Removed Result to avoid conflict
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct2D::{ID2D1Factory, ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
     D2D1CreateFactory, D2D1_FACTORY_TYPE_SINGLE_THREADED,
@@ -7,7 +7,8 @@ use windows::Win32::Graphics::Direct2D::{ID2D1Factory, ID2D1HwndRenderTarget, ID
     D2D1_PRESENT_OPTIONS_NONE, D2D1_DEBUG_LEVEL_NONE,
     D2D1_FACTORY_OPTIONS,
 };
-use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget_Impl; // Import traits explicitly for method availability
+// ID2D1RenderTarget_Impl is gated behind Foundation_Numerics, which we added to Cargo.toml
+use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget_Impl; 
 
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Direct2D::Common::{D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT, D2D1_COLOR_F, D2D_SIZE_U}; // Added D2D_SIZE_U
