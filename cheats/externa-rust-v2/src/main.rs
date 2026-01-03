@@ -81,7 +81,6 @@ impl Default for EspConfig {
 // ============================================================================
 
 struct GameState {
-    view_matrix: [[f32; 4]; 4],
     entities: Vec<Entity>,
     local_team: i32,
 }
@@ -177,7 +176,6 @@ fn main() -> Result<()> {
     
     // Shared state
     let state = Arc::new(Mutex::new(GameState {
-        view_matrix: [[0.0; 4]; 4],
         entities: Vec::with_capacity(64),
         local_team: 0,
     }));

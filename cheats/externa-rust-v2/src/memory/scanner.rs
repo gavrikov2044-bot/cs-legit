@@ -1,5 +1,8 @@
 //! Pattern Scanner for CS2 offset discovery
 //! Scans client.dll memory for signature patterns and resolves RIP-relative addresses
+//! Currently disabled - using API offsets instead
+
+#![allow(dead_code)]
 
 use anyhow::{anyhow, Result};
 use std::ffi::c_void;
