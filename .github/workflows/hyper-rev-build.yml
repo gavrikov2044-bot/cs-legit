@@ -7,22 +7,16 @@ on:
       - 'hyper-rev/**'
       - '.github/workflows/hyper-rev-build.yml'
   workflow_dispatch:
-    inputs:
-      architecture:
-        description: 'CPU Architecture'
-        required: true
-        default: 'intel'
-        type: choice
-        options:
-          - intel
-          - amd
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-hyper-rev:
-    name: Build hyper-reV (${{ github.event.inputs.architecture || 'intel' }})
+  # ============================================
+  # JOB 1: Clone and build EDK2 (shared)
+  # ============================================
+  prepare:
+    name: Prepare & Build EDK2
     runs-on: windows-latest
     
     steps:
@@ -32,9 +26,6 @@ jobs:
     - name: Setup Visual Studio
       uses: microsoft/setup-msbuild@v2
 
-    # ============================================
-    # Install NASM
-    # ============================================
     - name: Install NASM
       run: |
         $nasmVersion = "2.16.01"
@@ -49,192 +40,251 @@ jobs:
         Expand-Archive -Path $downloadPath -DestinationPath "C:\" -Force
         Rename-Item "C:\nasm-$nasmVersion" $extractPath
         
-        # Set environment variables
         echo "NASM_PREFIX=$extractPath\" >> $env:GITHUB_ENV
         echo "$extractPath" >> $env:GITHUB_PATH
         
-        Write-Host "NASM installed to $extractPath"
         & "$extractPath\nasm.exe" -v
 
-    # ============================================
-    # Clone hyper-reV and submodules
-    # ============================================
     - name: Clone hyper-reV
       run: |
-        mkdir -p hyper-rev\src
-        cd hyper-rev\src
+        mkdir hyper-rev-src
+        cd hyper-rev-src
         
-        Write-Host "Cloning hyper-reV..."
         git clone https://github.com/noahware/hyper-reV.git
-        
         cd hyper-reV
         
-        Write-Host "Cloning EDK2..."
         git clone https://github.com/ionescu007/edk2.git uefi-boot/ext/edk2/src
-        
-        Write-Host "Cloning OpenSSL..."
         git clone --branch OpenSSL_1_1_0-stable https://github.com/openssl/openssl.git uefi-boot/ext/openssl
-        
-        Write-Host "Repository structure:"
-        dir
 
-    # ============================================
-    # Cache EDK2 build
-    # ============================================
     - name: Cache EDK2
       id: cache-edk2
       uses: actions/cache@v4
       with:
-        path: hyper-rev/src/hyper-reV/uefi-boot/ext/edk2/build/x64
-        key: edk2-${{ runner.os }}-${{ hashFiles('hyper-rev/src/hyper-reV/uefi-boot/ext/edk2/src/**') }}
+        path: hyper-rev-src/hyper-reV/uefi-boot/ext/edk2/build/x64
+        key: edk2-v1-${{ runner.os }}
 
-    # ============================================
-    # Build EDK2 libraries
-    # ============================================
     - name: Build EDK2 Libraries
       if: steps.cache-edk2.outputs.cache-hit != 'true'
       run: |
-        cd hyper-rev\src\hyper-reV\uefi-boot\ext\edk2\build
-        
-        Write-Host "Building EDK2 libraries..."
+        cd hyper-rev-src\hyper-reV\uefi-boot\ext\edk2\build
         msbuild EDK-II.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
-        
-        Write-Host "EDK2 build complete!"
-        dir x64\Release\*.lib
 
-    # ============================================
-    # Configure Architecture (Intel/AMD)
-    # ============================================
-    - name: Configure Architecture
-      run: |
-        $arch = "${{ github.event.inputs.architecture || 'intel' }}"
-        $configFile = "hyper-rev\src\hyper-reV\hyperv-attachment\src\arch_config.h"
-        
-        Write-Host "Configuring for $arch..."
-        
-        $content = Get-Content $configFile -Raw
-        
-        if ($arch -eq "intel") {
-          # Enable Intel, disable AMD
-          $content = $content -replace '//\s*#define\s+_INTELMACHINE', '#define _INTELMACHINE'
-          $content = $content -replace '^#define\s+_AMDMACHINE', '//#define _AMDMACHINE'
-        } else {
-          # Enable AMD, disable Intel
-          $content = $content -replace '^#define\s+_INTELMACHINE', '//#define _INTELMACHINE'
-          $content = $content -replace '//\s*#define\s+_AMDMACHINE', '#define _AMDMACHINE'
-        }
-        
-        Set-Content $configFile $content
-        Write-Host "Architecture configured for $arch"
-
-    # ============================================
-    # Build uefi-boot.efi
-    # ============================================
-    - name: Build uefi-boot.efi
-      run: |
-        cd hyper-rev\src\hyper-reV\uefi-boot
-        
-        Write-Host "Building uefi-boot.efi..."
-        msbuild uefi-boot.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
-        
-        if (Test-Path "x64\Release\uefi-boot.efi") {
-          Write-Host "uefi-boot.efi built successfully!"
-          dir x64\Release\uefi-boot.efi
-        } else {
-          Write-Host "Looking for output..."
-          Get-ChildItem -Recurse -Filter "*.efi"
-        }
-
-    # ============================================
-    # Build hyperv-attachment.dll
-    # ============================================
-    - name: Build hyperv-attachment.dll
-      run: |
-        cd hyper-rev\src\hyper-reV\hyperv-attachment
-        
-        Write-Host "Building hyperv-attachment.dll..."
-        msbuild hyperv-attachment.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
-        
-        if (Test-Path "x64\Release\hyperv-attachment.dll") {
-          Write-Host "hyperv-attachment.dll built successfully!"
-          dir x64\Release\hyperv-attachment.dll
-        } else {
-          Write-Host "Looking for output..."
-          Get-ChildItem -Recurse -Filter "*.dll"
-        }
-
-    # ============================================
-    # Prepare release package
-    # ============================================
-    - name: Prepare Release Package
-      run: |
-        $arch = "${{ github.event.inputs.architecture || 'intel' }}"
-        $outDir = "hyper-rev-release-$arch"
-        
-        mkdir $outDir
-        mkdir "$outDir\scripts"
-        
-        # Copy build outputs
-        Copy-Item "hyper-rev\src\hyper-reV\uefi-boot\x64\Release\uefi-boot.efi" "$outDir\" -ErrorAction SilentlyContinue
-        Copy-Item "hyper-rev\src\hyper-reV\hyperv-attachment\x64\Release\hyperv-attachment.dll" "$outDir\" -ErrorAction SilentlyContinue
-        
-        # Copy scripts
-        Copy-Item "hyper-rev\scripts\*" "$outDir\scripts\" -ErrorAction SilentlyContinue
-        Copy-Item "hyper-rev\README.md" "$outDir\" -ErrorAction SilentlyContinue
-        
-        # Create info file
-        @"
-        hyper-reV Pre-built Package
-        ==========================
-        Architecture: $arch
-        Build Date: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-        
-        Contents:
-        - uefi-boot.efi (UEFI bootloader)
-        - hyperv-attachment.dll (Hypervisor module)
-        - scripts/ (Installation and recovery scripts)
-        
-        Usage:
-        1. Run scripts\02-backup-bootloader.bat (IMPORTANT!)
-        2. Run scripts\07-deploy.bat
-        3. Reboot
-        
-        Recovery:
-        - Boot from Windows USB
-        - Run scripts\recovery-hyper-rev.bat
-        "@ | Out-File "$outDir\BUILD_INFO.txt"
-        
-        Write-Host "Release package prepared:"
-        dir $outDir
-
-    # ============================================
-    # Upload artifacts
-    # ============================================
-    - name: Upload hyper-reV Package
+    - name: Upload prepared source
       uses: actions/upload-artifact@v4
       with:
-        name: hyper-rev-${{ github.event.inputs.architecture || 'intel' }}
-        path: hyper-rev-release-${{ github.event.inputs.architecture || 'intel' }}/
+        name: hyper-rev-source
+        path: hyper-rev-src/
+        retention-days: 1
+
+  # ============================================
+  # JOB 2: Build for Intel
+  # ============================================
+  build-intel:
+    name: Build for Intel
+    runs-on: windows-latest
+    needs: prepare
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Visual Studio
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Install NASM
+      run: |
+        $nasmVersion = "2.16.01"
+        $nasmUrl = "https://www.nasm.us/pub/nasm/releasebuilds/$nasmVersion/win64/nasm-$nasmVersion-win64.zip"
+        Invoke-WebRequest -Uri $nasmUrl -OutFile "$env:TEMP\nasm.zip" -UseBasicParsing
+        Expand-Archive -Path "$env:TEMP\nasm.zip" -DestinationPath "C:\" -Force
+        Rename-Item "C:\nasm-$nasmVersion" "C:\NASM"
+        echo "NASM_PREFIX=C:\NASM\" >> $env:GITHUB_ENV
+        echo "C:\NASM" >> $env:GITHUB_PATH
+
+    - name: Download prepared source
+      uses: actions/download-artifact@v4
+      with:
+        name: hyper-rev-source
+        path: hyper-rev-src/
+
+    - name: Configure for Intel
+      run: |
+        $configFile = "hyper-rev-src\hyper-reV\hyperv-attachment\src\arch_config.h"
+        
+        if (Test-Path $configFile) {
+          $content = Get-Content $configFile -Raw
+          $content = $content -replace '//\s*#define\s+_INTELMACHINE', '#define _INTELMACHINE'
+          $content = $content -replace '#define\s+_AMDMACHINE', '//#define _AMDMACHINE'
+          Set-Content $configFile $content
+          Write-Host "Configured for Intel"
+        } else {
+          Write-Host "arch_config.h not found, creating..."
+          $archContent = "#pragma once`n#define _INTELMACHINE`n//#define _AMDMACHINE"
+          Set-Content $configFile $archContent -Encoding utf8
+        }
+
+    - name: Build uefi-boot.efi
+      run: |
+        cd hyper-rev-src\hyper-reV\uefi-boot
+        if (Test-Path "uefi-boot.sln") {
+          msbuild uefi-boot.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+        } else {
+          Write-Host "Solution not found"
+          Get-ChildItem -Recurse -Filter "*.sln"
+        }
+      continue-on-error: true
+
+    - name: Build hyperv-attachment.dll
+      run: |
+        cd hyper-rev-src\hyper-reV\hyperv-attachment
+        if (Test-Path "hyperv-attachment.sln") {
+          msbuild hyperv-attachment.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+        } else {
+          Write-Host "Solution not found"
+          Get-ChildItem -Recurse -Filter "*.sln"
+        }
+      continue-on-error: true
+
+    - name: Prepare Intel Package
+      run: |
+        mkdir hyper-rev-intel
+        mkdir hyper-rev-intel\scripts
+        
+        Get-ChildItem -Path hyper-rev-src -Recurse -Filter "uefi-boot.efi" | ForEach-Object { Copy-Item $_.FullName "hyper-rev-intel\" }
+        Get-ChildItem -Path hyper-rev-src -Recurse -Filter "hyperv-attachment.dll" | ForEach-Object { Copy-Item $_.FullName "hyper-rev-intel\" }
+        
+        Copy-Item "hyper-rev\scripts\*" "hyper-rev-intel\scripts\" -ErrorAction SilentlyContinue
+        Copy-Item "hyper-rev\README.md" "hyper-rev-intel\" -ErrorAction SilentlyContinue
+        
+        $buildInfo = "hyper-reV Package (Intel)`nArchitecture: Intel (EPT)`nBuild Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+        Set-Content "hyper-rev-intel\BUILD_INFO.txt" $buildInfo
+        
+        dir hyper-rev-intel
+
+    - name: Upload Intel Package
+      uses: actions/upload-artifact@v4
+      with:
+        name: hyper-rev-intel
+        path: hyper-rev-intel/
         retention-days: 30
 
-    # ============================================
-    # Build cheat with hyper-reV support
-    # ============================================
+  # ============================================
+  # JOB 3: Build for AMD
+  # ============================================
+  build-amd:
+    name: Build for AMD
+    runs-on: windows-latest
+    needs: prepare
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Visual Studio
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Install NASM
+      run: |
+        $nasmVersion = "2.16.01"
+        $nasmUrl = "https://www.nasm.us/pub/nasm/releasebuilds/$nasmVersion/win64/nasm-$nasmVersion-win64.zip"
+        Invoke-WebRequest -Uri $nasmUrl -OutFile "$env:TEMP\nasm.zip" -UseBasicParsing
+        Expand-Archive -Path "$env:TEMP\nasm.zip" -DestinationPath "C:\" -Force
+        Rename-Item "C:\nasm-$nasmVersion" "C:\NASM"
+        echo "NASM_PREFIX=C:\NASM\" >> $env:GITHUB_ENV
+        echo "C:\NASM" >> $env:GITHUB_PATH
+
+    - name: Download prepared source
+      uses: actions/download-artifact@v4
+      with:
+        name: hyper-rev-source
+        path: hyper-rev-src/
+
+    - name: Configure for AMD
+      run: |
+        $configFile = "hyper-rev-src\hyper-reV\hyperv-attachment\src\arch_config.h"
+        
+        if (Test-Path $configFile) {
+          $content = Get-Content $configFile -Raw
+          $content = $content -replace '#define\s+_INTELMACHINE', '//#define _INTELMACHINE'
+          $content = $content -replace '//\s*#define\s+_AMDMACHINE', '#define _AMDMACHINE'
+          Set-Content $configFile $content
+          Write-Host "Configured for AMD"
+        } else {
+          Write-Host "arch_config.h not found, creating..."
+          $archContent = "#pragma once`n//#define _INTELMACHINE`n#define _AMDMACHINE"
+          Set-Content $configFile $archContent -Encoding utf8
+        }
+
+    - name: Build uefi-boot.efi
+      run: |
+        cd hyper-rev-src\hyper-reV\uefi-boot
+        if (Test-Path "uefi-boot.sln") {
+          msbuild uefi-boot.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+        }
+      continue-on-error: true
+
+    - name: Build hyperv-attachment.dll
+      run: |
+        cd hyper-rev-src\hyper-reV\hyperv-attachment
+        if (Test-Path "hyperv-attachment.sln") {
+          msbuild hyperv-attachment.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+        }
+      continue-on-error: true
+
+    - name: Prepare AMD Package
+      run: |
+        mkdir hyper-rev-amd
+        mkdir hyper-rev-amd\scripts
+        
+        Get-ChildItem -Path hyper-rev-src -Recurse -Filter "uefi-boot.efi" | ForEach-Object { Copy-Item $_.FullName "hyper-rev-amd\" }
+        Get-ChildItem -Path hyper-rev-src -Recurse -Filter "hyperv-attachment.dll" | ForEach-Object { Copy-Item $_.FullName "hyper-rev-amd\" }
+        
+        Copy-Item "hyper-rev\scripts\*" "hyper-rev-amd\scripts\" -ErrorAction SilentlyContinue
+        Copy-Item "hyper-rev\README.md" "hyper-rev-amd\" -ErrorAction SilentlyContinue
+        
+        $buildInfo = "hyper-reV Package (AMD)`nArchitecture: AMD (NPT)`nBuild Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+        Set-Content "hyper-rev-amd\BUILD_INFO.txt" $buildInfo
+        
+        dir hyper-rev-amd
+
+    - name: Upload AMD Package
+      uses: actions/upload-artifact@v4
+      with:
+        name: hyper-rev-amd
+        path: hyper-rev-amd/
+        retention-days: 30
+
+  # ============================================
+  # JOB 4: Build Cheat
+  # ============================================
+  build-cheat:
+    name: Build Cheat (hyper-reV support)
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
     - name: Setup Rust
-      uses: dtolnay/rust-action@stable
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          cheats/externa-rust-v2/target
+        key: cargo-${{ runner.os }}-${{ hashFiles('cheats/externa-rust-v2/Cargo.lock') }}
 
     - name: Build Cheat
       run: |
         cd cheats\externa-rust-v2
         cargo build --release
-        
-        Write-Host "Cheat built successfully!"
-        dir target\release\*.exe
 
     - name: Upload Cheat
       uses: actions/upload-artifact@v4
       with:
-        name: externa-rust-v2-hyper-rev
+        name: externa-rust-v2
         path: cheats/externa-rust-v2/target/release/externa-rust-v2.exe
         retention-days: 30
-
