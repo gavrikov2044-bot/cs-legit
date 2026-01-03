@@ -40,16 +40,16 @@ _deps/
 
 # Visual Studio
 .vs/
-*.sln
-*.vcxproj
-*.vcxproj.filters
-*.vcxproj.user
 *.suo
-*.user
 *.sdf
 *.opensdf
 *.db
 *.opendb
+# Allow driver project files
+!laith-km-driver/*.sln
+!laith-km-driver/**/*.vcxproj
+!laith-km-driver/**/*.vcxproj.filters
+!laith-km-driver/**/*.vcxproj.user
 
 # Logs
 *.log
