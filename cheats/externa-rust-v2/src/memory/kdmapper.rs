@@ -8,6 +8,8 @@
 //! - Windows 10/11 x64
 //! - Administrator privileges
 
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::fs;
@@ -456,18 +458,18 @@ impl KernelMemory {
             // Read name RVAs
             let mut name_rvas = vec![0u32; num_names];
             self.phys.read(base + names_rva as u64, 
-                unsafe { std::slice::from_raw_parts_mut(name_rvas.as_mut_ptr() as *mut u8, num_names * 4) });
+                std::slice::from_raw_parts_mut(name_rvas.as_mut_ptr() as *mut u8, num_names * 4));
             
             // Read ordinals
             let mut ordinals = vec![0u16; num_names];
             self.phys.read(base + ordinals_rva as u64,
-                unsafe { std::slice::from_raw_parts_mut(ordinals.as_mut_ptr() as *mut u8, num_names * 2) });
+                std::slice::from_raw_parts_mut(ordinals.as_mut_ptr() as *mut u8, num_names * 2));
             
             // Read function RVAs
             let num_functions = export_dir.number_of_functions as usize;
             let mut function_rvas = vec![0u32; num_functions];
             self.phys.read(base + functions_rva as u64,
-                unsafe { std::slice::from_raw_parts_mut(function_rvas.as_mut_ptr() as *mut u8, num_functions * 4) });
+                std::slice::from_raw_parts_mut(function_rvas.as_mut_ptr() as *mut u8, num_functions * 4));
             
             // Parse each export
             for i in 0..num_names {

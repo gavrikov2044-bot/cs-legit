@@ -18,6 +18,7 @@ impl Drop for SendHandle {
 pub trait ProcessReader {
     fn read_raw(&self, address: usize, buffer: &mut [u8]) -> bool;
     
+    #[allow(dead_code)]
     fn read<T: Copy>(&self, address: usize) -> Option<T> {
         let mut buffer = std::mem::MaybeUninit::<T>::zeroed();
         unsafe {

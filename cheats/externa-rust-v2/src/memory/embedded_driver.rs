@@ -213,6 +213,7 @@ impl EmbeddedDriver {
     }
     
     /// Проверить загружен ли драйвер
+    #[allow(dead_code)]
     pub fn is_loaded() -> bool {
         DRIVER_LOADED.load(Ordering::SeqCst)
     }

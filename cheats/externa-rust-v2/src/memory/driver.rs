@@ -4,6 +4,8 @@
 //! Device: \\.\laithdriver
 //! IOCTL codes: ATTACH=0x800, READ=0x801, BATCH_READ=0x804
 
+#![allow(dead_code)]
+
 use std::ffi::c_void;
 use std::mem;
 use std::ptr;

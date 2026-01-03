@@ -19,7 +19,6 @@ use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 
 use crate::game::entity::{Entity, Bones};
 use crate::game::offsets::{Offsets, netvars};
-use crate::memory::handle::ProcessReader;
 
 // ============================================================================
 // Logging Setup
