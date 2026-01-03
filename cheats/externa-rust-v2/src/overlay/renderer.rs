@@ -93,7 +93,7 @@ impl Direct2DOverlay {
             let brush_enemy = target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }, None)?;
             let brush_team = target.CreateSolidColorBrush(&D2D1_COLOR_F { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }, None)?;
 
-            Ok(Self { hwnd, factory, target, brush_enemy, brush_team, width, height })
+            Ok(Self { _hwnd: hwnd, _factory: factory, target, brush_enemy, brush_team, width, height })
         }
     }
 

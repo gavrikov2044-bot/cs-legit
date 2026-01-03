@@ -33,7 +33,7 @@ fn main() -> Result<()> {
                     info!("Attached to CS2! PID: {}, Client: 0x{:X}", pid, base);
                     break Arc::new(memory::Memory {
                         handle: Arc::new(memory::handle::SendHandle(handle)),
-                        pid,
+                        _pid: pid,
                         client_base: base,
                     });
                 }
