@@ -28,14 +28,45 @@ jobs:
 
     - name: Install NASM
       run: |
-        $nasmVersion = "2.16.01"
-        $nasmUrl = "https://www.nasm.us/pub/nasm/releasebuilds/$nasmVersion/win64/nasm-$nasmVersion-win64.zip"
-        Invoke-WebRequest -Uri $nasmUrl -OutFile "$env:TEMP\nasm.zip" -UseBasicParsing
-        Expand-Archive -Path "$env:TEMP\nasm.zip" -DestinationPath "C:\" -Force
-        Rename-Item "C:\nasm-$nasmVersion" "C:\NASM"
-        echo "NASM_PREFIX=C:\NASM\" >> $env:GITHUB_ENV
-        echo "C:\NASM" >> $env:GITHUB_PATH
-        & "C:\NASM\nasm.exe" -v
+        # Try multiple sources for NASM
+        $installed = $false
+        
+        # Method 1: Chocolatey (most reliable)
+        try {
+          choco install nasm -y --no-progress
+          $nasmPath = "C:\Program Files\NASM"
+          if (Test-Path "$nasmPath\nasm.exe") {
+            echo "NASM_PREFIX=$nasmPath\" >> $env:GITHUB_ENV
+            echo "$nasmPath" >> $env:GITHUB_PATH
+            Write-Host "NASM installed via Chocolatey"
+            $installed = $true
+          }
+        } catch {
+          Write-Host "Chocolatey failed: $_"
+        }
+        
+        # Method 2: Direct download from GitHub mirror
+        if (-not $installed) {
+          try {
+            $url = "https://github.com/netwide-assembler/nasm/releases/download/nasm-2.16.01/nasm-2.16.01-win64.zip"
+            Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\nasm.zip" -UseBasicParsing -TimeoutSec 120
+            Expand-Archive -Path "$env:TEMP\nasm.zip" -DestinationPath "C:\" -Force
+            Rename-Item "C:\nasm-2.16.01" "C:\NASM" -ErrorAction SilentlyContinue
+            echo "NASM_PREFIX=C:\NASM\" >> $env:GITHUB_ENV
+            echo "C:\NASM" >> $env:GITHUB_PATH
+            Write-Host "NASM installed from GitHub"
+            $installed = $true
+          } catch {
+            Write-Host "GitHub download failed: $_"
+          }
+        }
+        
+        if ($installed) {
+          nasm -v
+        } else {
+          Write-Host "WARNING: NASM not installed"
+        }
+      shell: pwsh
 
     - name: Clone hyper-reV with submodules
       run: |
@@ -105,12 +136,11 @@ jobs:
 
     - name: Install NASM
       run: |
-        $nasmVersion = "2.16.01"
-        Invoke-WebRequest -Uri "https://www.nasm.us/pub/nasm/releasebuilds/$nasmVersion/win64/nasm-$nasmVersion-win64.zip" -OutFile "$env:TEMP\nasm.zip" -UseBasicParsing
-        Expand-Archive -Path "$env:TEMP\nasm.zip" -DestinationPath "C:\" -Force
-        Rename-Item "C:\nasm-$nasmVersion" "C:\NASM"
-        echo "NASM_PREFIX=C:\NASM\" >> $env:GITHUB_ENV
-        echo "C:\NASM" >> $env:GITHUB_PATH
+        choco install nasm -y --no-progress
+        $nasmPath = "C:\Program Files\NASM"
+        echo "NASM_PREFIX=$nasmPath\" >> $env:GITHUB_ENV
+        echo "$nasmPath" >> $env:GITHUB_PATH
+      shell: pwsh
 
     - name: Download prepared source
       uses: actions/download-artifact@v4
@@ -207,12 +237,11 @@ jobs:
 
     - name: Install NASM
       run: |
-        $nasmVersion = "2.16.01"
-        Invoke-WebRequest -Uri "https://www.nasm.us/pub/nasm/releasebuilds/$nasmVersion/win64/nasm-$nasmVersion-win64.zip" -OutFile "$env:TEMP\nasm.zip" -UseBasicParsing
-        Expand-Archive -Path "$env:TEMP\nasm.zip" -DestinationPath "C:\" -Force
-        Rename-Item "C:\nasm-$nasmVersion" "C:\NASM"
-        echo "NASM_PREFIX=C:\NASM\" >> $env:GITHUB_ENV
-        echo "C:\NASM" >> $env:GITHUB_PATH
+        choco install nasm -y --no-progress
+        $nasmPath = "C:\Program Files\NASM"
+        echo "NASM_PREFIX=$nasmPath\" >> $env:GITHUB_ENV
+        echo "$nasmPath" >> $env:GITHUB_PATH
+      shell: pwsh
 
     - name: Download prepared source
       uses: actions/download-artifact@v4
