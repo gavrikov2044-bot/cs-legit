@@ -165,9 +165,8 @@ impl Direct2DOverlay {
             // EndDraw returns error if device lost
             match self.target.EndDraw(None, None) {
                 Ok(_) => {
-                    // Sync with Desktop Window Manager for smoother display
-                    // This waits for the next VBlank, reducing tearing and improving sync
-                    let _ = DwmFlush();
+                    // DwmFlush disabled - was causing crashes on some systems
+                    // let _ = DwmFlush();
                     true
                 }
                 Err(e) => {
