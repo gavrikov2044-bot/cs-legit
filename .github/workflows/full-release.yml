@@ -1,0 +1,312 @@
+name: Full Release Build
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ============================================
+  # SINGLE JOB - Build Everything Together
+  # ============================================
+  build-all:
+    name: Build Complete Package
+    runs-on: windows-2022
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Get Version
+      id: version
+      run: |
+        $cargo = Get-Content "cheats/externa-rust-v2/Cargo.toml" -Raw
+        if ($cargo -match 'version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"') {
+          $version = $matches[1]
+        } else {
+          $version = "2.4.0"
+        }
+        echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+      shell: pwsh
+
+    # ========== STEP 1: Get Intel Driver ==========
+    - name: Download Intel Driver (iqvw64e.sys)
+      run: |
+        $assetsDir = "cheats/externa-rust-v2/assets"
+        New-Item -ItemType Directory -Force -Path $assetsDir | Out-Null
+        
+        # Multiple sources to try
+        $urls = @(
+          "https://github.com/TheCruZ/kdmapper/releases/download/v1.4.0/iqvw64e.sys",
+          "https://raw.githubusercontent.com/TheCruZ/kdmapper/main/driver/iqvw64e.sys"
+        )
+        
+        $success = $false
+        foreach ($url in $urls) {
+          try {
+            Write-Host "Trying: $url"
+            Invoke-WebRequest -Uri $url -OutFile "$assetsDir/iqvw64e.sys" -UseBasicParsing -TimeoutSec 60
+            if ((Test-Path "$assetsDir/iqvw64e.sys") -and ((Get-Item "$assetsDir/iqvw64e.sys").Length -gt 10000)) {
+              Write-Host "SUCCESS: Downloaded iqvw64e.sys"
+              $success = $true
+              break
+            }
+          } catch {
+            Write-Host "Failed: $_"
+          }
+        }
+        
+        if (-not $success) {
+          Write-Host "WARNING: Could not download Intel driver"
+        }
+      shell: pwsh
+
+    # ========== STEP 2: Try to Build Driver with WDK ==========
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Check/Install WDK
+      id: wdk
+      run: |
+        $wdkPath = "${env:ProgramFiles(x86)}\Windows Kits\10\Include"
+        
+        if (Test-Path $wdkPath) {
+          $versions = Get-ChildItem $wdkPath -Directory -ErrorAction SilentlyContinue
+          if ($versions) {
+            Write-Host "WDK found: $($versions.Name -join ', ')"
+            echo "WDK_AVAILABLE=true" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "WDK_AVAILABLE=false" >> $env:GITHUB_OUTPUT
+          }
+        } else {
+          Write-Host "WDK not found, trying to install..."
+          echo "WDK_AVAILABLE=false" >> $env:GITHUB_OUTPUT
+          
+          # Try to install WDK (this may take a while)
+          try {
+            $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2196230"
+            $installer = "$env:TEMP\wdksetup.exe"
+            Invoke-WebRequest -Uri $wdkUrl -OutFile $installer -UseBasicParsing
+            Start-Process -FilePath $installer -ArgumentList "/quiet","/norestart" -Wait -NoNewWindow
+            echo "WDK_AVAILABLE=true" >> $env:GITHUB_OUTPUT
+          } catch {
+            Write-Host "WDK install failed: $_"
+          }
+        }
+      shell: pwsh
+      timeout-minutes: 25
+      continue-on-error: true
+
+    - name: Build Driver (if WDK available)
+      id: driver_build
+      run: |
+        $solution = "laith-km-driver/Driver.sln"
+        
+        if (Test-Path $solution) {
+          Write-Host "Building driver..."
+          $result = msbuild $solution /p:Configuration=Release /p:Platform=x64 /m /v:minimal 2>&1
+          
+          # Find built driver
+          $sys = Get-ChildItem -Path "laith-km-driver" -Recurse -Filter "*.sys" -ErrorAction SilentlyContinue | Select-Object -First 1
+          
+          if ($sys) {
+            $dest = "cheats/externa-rust-v2/assets/laithdriver.sys"
+            Copy-Item $sys.FullName $dest
+            Write-Host "SUCCESS: Driver built and copied to assets"
+            echo "DRIVER_BUILT=true" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "Driver build failed or .sys not found"
+            echo "DRIVER_BUILT=false" >> $env:GITHUB_OUTPUT
+          }
+        } else {
+          Write-Host "Solution not found"
+          echo "DRIVER_BUILT=false" >> $env:GITHUB_OUTPUT
+        }
+      shell: pwsh
+      continue-on-error: true
+
+    # ========== STEP 3: Create Dummy Driver if Build Failed ==========
+    - name: Create Minimal Driver Stub (Fallback)
+      if: steps.driver_build.outputs.DRIVER_BUILT != 'true'
+      run: |
+        $assetsDir = "cheats/externa-rust-v2/assets"
+        $driverPath = "$assetsDir/laithdriver.sys"
+        
+        if (-not (Test-Path $driverPath)) {
+          Write-Host "Creating placeholder - driver will need to be loaded externally"
+          # Create a minimal valid PE header that won't crash but also won't work
+          # This is just so the build succeeds - user needs real driver
+          
+          # Actually, let's just not embed if we don't have a real driver
+          # We'll build without embed_drivers feature instead
+          Write-Host "No driver available - will build standard version only"
+        }
+      shell: pwsh
+
+    # ========== STEP 4: Build Rust Cheat ==========
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-pc-windows-msvc
+
+    - name: Cache Cargo
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: cheats/externa-rust-v2
+
+    - name: Check Assets
+      id: check_assets
+      run: |
+        $assets = "cheats/externa-rust-v2/assets"
+        $hasLaith = Test-Path "$assets/laithdriver.sys"
+        $hasIntel = Test-Path "$assets/iqvw64e.sys"
+        
+        Write-Host "laithdriver.sys: $hasLaith"
+        Write-Host "iqvw64e.sys: $hasIntel"
+        
+        if ($hasLaith -and $hasIntel) {
+          $laithSize = (Get-Item "$assets/laithdriver.sys").Length
+          $intelSize = (Get-Item "$assets/iqvw64e.sys").Length
+          Write-Host "Sizes: laith=$laithSize, intel=$intelSize"
+          
+          if ($laithSize -gt 1000 -and $intelSize -gt 10000) {
+            echo "CAN_EMBED=true" >> $env:GITHUB_OUTPUT
+            Write-Host "Both drivers valid - will embed!"
+          } else {
+            echo "CAN_EMBED=false" >> $env:GITHUB_OUTPUT
+          }
+        } else {
+          echo "CAN_EMBED=false" >> $env:GITHUB_OUTPUT
+        }
+      shell: pwsh
+
+    # Build standard version (always)
+    - name: Build Standard Version
+      working-directory: cheats/externa-rust-v2
+      run: cargo build --release
+
+    - name: Prepare Standard Build
+      run: |
+        $version = "${{ steps.version.outputs.VERSION }}"
+        $src = "cheats/externa-rust-v2/target/release/externa-rust-v2.exe"
+        $dest = "release/Externa-CS2-v${version}.exe"
+        
+        New-Item -ItemType Directory -Force -Path "release" | Out-Null
+        Copy-Item $src $dest
+        Write-Host "Standard build: $dest"
+      shell: pwsh
+
+    # Build embedded version (if drivers available)
+    - name: Build Embedded Version
+      if: steps.check_assets.outputs.CAN_EMBED == 'true'
+      working-directory: cheats/externa-rust-v2
+      run: |
+        cargo clean
+        cargo build --release --features embed_drivers
+
+    - name: Prepare Embedded Build
+      if: steps.check_assets.outputs.CAN_EMBED == 'true'
+      run: |
+        $version = "${{ steps.version.outputs.VERSION }}"
+        $src = "cheats/externa-rust-v2/target/release/externa-rust-v2.exe"
+        $dest = "release/Externa-CS2-v${version}-FULL.exe"
+        
+        Copy-Item $src $dest
+        $size = (Get-Item $dest).Length / 1MB
+        Write-Host "Embedded build: $dest (${size}MB)"
+      shell: pwsh
+
+    # ========== STEP 5: Create Package ==========
+    - name: Create README
+      run: |
+        @"
+        ╔══════════════════════════════════════════════════════════════╗
+        ║                  Externa CS2 ESP v${{ steps.version.outputs.VERSION }}                      ║
+        ╠══════════════════════════════════════════════════════════════╣
+        ║                                                              ║
+        ║  FILES:                                                      ║
+        ║  • Externa-CS2-vX.X.X-FULL.exe - Drivers embedded (best!)   ║
+        ║  • Externa-CS2-vX.X.X.exe - Standard (syscall mode)         ║
+        ║                                                              ║
+        ║  USAGE:                                                      ║
+        ║  1. Start CS2                                                ║
+        ║  2. Run .exe as Administrator                                ║
+        ║  3. Press INSERT to toggle ESP                               ║
+        ║  4. Press END to exit                                        ║
+        ║                                                              ║
+        ║  MODES:                                                      ║
+        ║  • Kernel Driver - Ultra fast (FULL version)                ║
+        ║  • Direct Syscall - Fast, bypasses hooks                    ║
+        ║  • WinAPI - Fallback                                        ║
+        ║                                                              ║
+        ╚══════════════════════════════════════════════════════════════╝
+        "@ | Out-File "release/README.txt" -Encoding UTF8
+      shell: pwsh
+
+    - name: Copy Driver Files (if built)
+      if: steps.driver_build.outputs.DRIVER_BUILT == 'true'
+      run: |
+        New-Item -ItemType Directory -Force -Path "release/driver" | Out-Null
+        
+        $sys = Get-ChildItem -Path "laith-km-driver" -Recurse -Filter "*.sys" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($sys) {
+          Copy-Item $sys.FullName "release/driver/"
+        }
+        
+        # Also copy Intel driver if available
+        $intel = "cheats/externa-rust-v2/assets/iqvw64e.sys"
+        if (Test-Path $intel) {
+          Copy-Item $intel "release/driver/"
+        }
+      shell: pwsh
+
+    - name: List Package Contents
+      run: |
+        Write-Host "=== PACKAGE CONTENTS ==="
+        Get-ChildItem -Path "release" -Recurse | ForEach-Object {
+          $size = if ($_.PSIsContainer) { "[DIR]" } else { "$([math]::Round($_.Length/1KB))KB" }
+          Write-Host "$size $($_.FullName.Replace((Get-Location).Path + '\release\', ''))"
+        }
+      shell: pwsh
+
+    # ========== STEP 6: Upload ==========
+    - name: Upload Complete Package
+      uses: actions/upload-artifact@v4
+      with:
+        name: Externa-CS2-v${{ steps.version.outputs.VERSION }}-Complete
+        path: release/
+        if-no-files-found: error
+        retention-days: 90
+
+    # ========== STEP 7: GitHub Release (on tag) ==========
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v1
+      with:
+        name: Externa CS2 v${{ steps.version.outputs.VERSION }}
+        body: |
+          ## 🎮 Externa CS2 ESP v${{ steps.version.outputs.VERSION }}
+          
+          ### 📦 Versions
+          - **Externa-CS2-vX.X.X-FULL.exe** - Recommended! Drivers inside, just run
+          - **Externa-CS2-vX.X.X.exe** - Standard syscall version
+          
+          ### ⌨️ Controls
+          - `INSERT` - Toggle ESP
+          - `END` - Exit
+          
+          ### ✨ Features
+          - Box ESP, Skeleton, Health bars
+          - Auto driver loading
+          - Syscall fallback
+        files: release/*
+        draft: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

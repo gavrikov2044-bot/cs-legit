@@ -97,13 +97,18 @@ fn main() -> Result<()> {
     init_logging();
     
     info!("╔════════════════════════════════════════════╗");
-    info!("║       Externa Rust V2.3 - CS2 ESP          ║");
+    info!("║       Externa Rust V2.4 - CS2 ESP          ║");
     info!("║  [INSERT] Toggle ESP | [END] Exit          ║");
     info!("║  Log file: externa.log                     ║");
     info!("╚════════════════════════════════════════════╝");
 
     // Initialize syscalls
     memory::syscall::init();
+    
+    // Auto-load driver (embedded or external)
+    // Falls back to syscall if driver loading fails
+    let _driver_loaded = memory::embedded_driver::auto_load_driver();
+    info!("[Mode] {}", memory::embedded_driver::get_mode());
     
     // Wait for CS2 and attach first (needed for pattern scanner)
     let mem = loop {

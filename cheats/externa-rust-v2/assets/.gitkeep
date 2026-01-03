@@ -1,0 +1,4 @@
+# This folder contains driver files for embedding
+# laithdriver.sys - custom driver
+# iqvw64e.sys - Intel driver for kdmapper
+

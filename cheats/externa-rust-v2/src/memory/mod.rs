@@ -1,5 +1,8 @@
 pub mod driver;
+pub mod driver_loader;
+pub mod embedded_driver;
 pub mod handle;
+pub mod kdmapper;
 pub mod scanner;
 pub mod syscall;
 

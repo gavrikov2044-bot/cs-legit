@@ -1,7 +1,13 @@
 [package]
 name = "externa-rust-v2"
-version = "2.3.0"
+version = "2.4.0"
 edition = "2021"
+
+[features]
+default = []
+# Enable to embed drivers directly into exe
+# Requires: assets/laithdriver.sys and assets/iqvw64e.sys
+embed_drivers = []
 
 [dependencies]
 # Windows API
@@ -15,6 +21,10 @@ windows = { version = "0.59", features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_Console",
+    "Win32_System_Services",
+    "Win32_System_SystemInformation",
+    "Win32_System_IO",
+    "Win32_Storage_FileSystem",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_Graphics_Gdi",
