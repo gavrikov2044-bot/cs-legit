@@ -1,311 +1,538 @@
+//! Externa Rust V2 - External ESP for CS2
+//! Features: Box ESP, Skeleton ESP, Snaplines, Health bars, Hotkey toggle
+
 mod game;
 mod memory;
 mod overlay;
 
-use std::sync::{Arc, Mutex};
+use std::fs::File;
+use std::io::Write;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 use anyhow::Result;
 use glam::Vec3;
-use log::info;
-use crate::memory::handle::ProcessReader; // This is now correctly imported from the trait definition
+use log::{info, warn, error, LevelFilter};
+use env_logger::Builder;
+use parking_lot::Mutex;
+use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 
-// Global Game State
+use crate::game::entity::{Entity, Bones};
+use crate::game::offsets::{Offsets, netvars};
+use crate::memory::handle::ProcessReader;
+
+// ============================================================================
+// Logging Setup
+// ============================================================================
+
+/// Initialize logging to both console and file (externa.log)
+fn init_logging() {
+    // Create log file
+    let log_file = File::create("externa.log").ok();
+    let log_file = Arc::new(Mutex::new(log_file));
+    let log_file_clone = log_file.clone();
+    
+    Builder::new()
+        .filter_level(LevelFilter::Info)
+        .format(move |buf, record| {
+            use std::io::Write;
+            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+            let line = format!("[{}] [{}] {}\n", timestamp, record.level(), record.args());
+            
+            // Write to file
+            if let Some(ref mut file) = *log_file_clone.lock() {
+                let _ = file.write_all(line.as_bytes());
+                let _ = file.flush();
+            }
+            
+            // Write to console
+            write!(buf, "{}", line)
+        })
+        .init();
+}
+
+// ============================================================================
+// Configuration
+// ============================================================================
+
+/// ESP Settings
+struct EspConfig {
+    enabled: AtomicBool,
+    show_box: AtomicBool,
+    show_skeleton: AtomicBool,
+    show_snaplines: AtomicBool,
+    show_health: AtomicBool,
+}
+
+impl Default for EspConfig {
+    fn default() -> Self {
+        Self {
+            enabled: AtomicBool::new(true),
+            show_box: AtomicBool::new(true),
+            show_skeleton: AtomicBool::new(true),
+            show_snaplines: AtomicBool::new(false),
+            show_health: AtomicBool::new(true),
+        }
+    }
+}
+
+// ============================================================================
+// Game State
+// ============================================================================
+
 struct GameState {
     view_matrix: [[f32; 4]; 4],
-    entities: Vec<game::entity::Entity>,
+    entities: Vec<Entity>,
     local_team: i32,
 }
 
-fn main() -> Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    
-    info!("Initializing Externa Rust V2...");
+// ============================================================================
+// Main
+// ============================================================================
 
-    // 1. Initialize Memory
-    memory::syscall::init(); // Init syscalls
+fn main() -> Result<()> {
+    // Initialize logging (console + externa.log file)
+    init_logging();
     
-    // 2. Attach to CS2
+    info!("╔════════════════════════════════════════════╗");
+    info!("║       Externa Rust V2.3 - CS2 ESP          ║");
+    info!("║  [INSERT] Toggle ESP | [END] Exit          ║");
+    info!("║  Log file: externa.log                     ║");
+    info!("╚════════════════════════════════════════════╝");
+
+    // Initialize syscalls
+    memory::syscall::init();
+    
+    // Wait for CS2 and attach first (needed for pattern scanner)
     let mem = loop {
-        if let Ok(pid) = get_pid("cs2.exe") {
-            if let Ok(handle) = open_process(pid) {
-                if let Ok(base) = get_module_base(pid, "client.dll") {
-                    info!("Attached to CS2! PID: {}, Client: 0x{:X}", pid, base);
-                    break Arc::new(memory::Memory {
-                        handle: Arc::new(memory::handle::SendHandle(handle)),
-                        _pid: pid,
-                        client_base: base,
-                    });
-                }
+        match attach_to_cs2() {
+            Ok(mem) => break Arc::new(mem),
+            Err(e) => {
+                info!("Waiting for CS2... ({})", e);
+                thread::sleep(Duration::from_secs(2));
             }
         }
-        thread::sleep(Duration::from_secs(1));
     };
-
-    // 3. Offsets - Use hardcoded from dump (scanner gave wrong results)
-    // Pattern scanner disabled - Set 3 gave wrong offsets (0x20256C0 vs 0x1D13CE8)
-    info!("Using HARDCODED offsets from dump (scanner disabled)...");
-    info!("  dwEntityList: 0x{:X}", game::offsets::DW_ENTITY_LIST);
-    info!("  dwLocalPlayerController: 0x{:X}", game::offsets::DW_LOCAL_PLAYER_CONTROLLER);
-    info!("  dwViewMatrix: 0x{:X}", game::offsets::DW_VIEW_MATRIX);
     
-    let offsets = Arc::new(game::offsets::Offsets {
-        dw_entity_list: game::offsets::DW_ENTITY_LIST,
-        dw_local_player_controller: game::offsets::DW_LOCAL_PLAYER_CONTROLLER,
-        dw_view_matrix: game::offsets::DW_VIEW_MATRIX,
-    });
+    info!("Attached to CS2! PID: {}, Client: 0x{:X}", mem._pid, mem.client_base);
     
-    // Verify offsets by reading and checking if values look valid
-    let test_ent_list: usize = mem.read(mem.client_base + offsets.dw_entity_list).unwrap_or(0);
-    let test_local: usize = mem.read(mem.client_base + offsets.dw_local_player_controller).unwrap_or(0);
-    info!("Verification:");
-    info!("  EntityList ptr: 0x{:X} (should be heap: {})", test_ent_list, test_ent_list > 0x10000000000);
-    info!("  LocalCtrl ptr: 0x{:X} (should be heap: {})", test_local, test_local > 0x10000000000);
+    // Fetch offsets with pattern scanner (priority) or API fallback
+    let offsets = Arc::new(Offsets::fetch_with_scan(mem._pid));
     
-    // If EntityList is not a heap pointer, offsets are wrong!
-    if test_ent_list < 0x10000000000 {
-        log::error!("WARNING: EntityList pointer looks WRONG! Offsets may be outdated.");
-        log::error!("Please update offsets in src/game/offsets.rs with fresh dump!");
-    }
+    // Verify offsets
+    verify_offsets(&mem, &offsets);
     
-    // 4. Shared State
+    // Shared state
     let state = Arc::new(Mutex::new(GameState {
         view_matrix: [[0.0; 4]; 4],
         entities: Vec::with_capacity(64),
         local_team: 0,
     }));
+    
+    // ESP Config
+    let config = Arc::new(EspConfig::default());
 
-    // 5. Memory Loop
-    let mem_clone = mem.clone();
-    let state_clone = state.clone();
-    let offsets_clone = offsets.clone();
+    // Spawn memory reading thread
+    spawn_memory_thread(mem.clone(), state.clone(), offsets.clone());
+    
+    // Spawn input handling thread
+    spawn_input_thread(config.clone());
 
-    thread::spawn(move || {
-        info!("Memory thread started.");
-        let mut last_debug = std::time::Instant::now();
-        static mut FIRST_ENEMY_LOGGED: bool = false;
-        loop {
-            if let Ok(mut st) = state_clone.lock() {
-                // Read Matrix
-                if let Some(mat) = mem_clone.read::<[[f32; 4]; 4]>(mem_clone.client_base + offsets_clone.dw_view_matrix) {
-                    st.view_matrix = mat;
-                }
+    // Main overlay loop
+    run_overlay_loop(state, config)?;
 
-                // Read Local Player
-                let mut local_team = 0;
-                let local_ctrl: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_local_player_controller).unwrap_or(0);
-                const STRIDE: usize = 112; // 0x70 - from working C++ code
-                
-                if local_ctrl != 0 && local_ctrl < 0x7FF000000000 {
-                     let pawn_h: u32 = mem_clone.read(local_ctrl + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
-                     let ent_list: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_entity_list).unwrap_or(0);
-                     
-                     if ent_list != 0 && pawn_h != 0 && pawn_h != 0xFFFFFFFF {
-                         let chunk_idx = (pawn_h as usize & 0x7FFF) >> 9;
-                         let entry_idx = pawn_h as usize & 0x1FF;
-                         let entry: usize = mem_clone.read(ent_list + 8 * chunk_idx + 0x10).unwrap_or(0);
-                         if entry != 0 {
-                             let pawn: usize = mem_clone.read(entry + entry_idx * STRIDE).unwrap_or(0);
-                             if pawn != 0 && pawn < 0x7FF000000000 {
-                                 local_team = mem_clone.read(pawn + game::offsets::netvars::M_I_TEAM_NUM).unwrap_or(0);
-                             }
-                         }
-                     }
-                }
-                st.local_team = local_team;
-
-                // Read Entities
-                st.entities.clear();
-                let ent_list: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_entity_list).unwrap_or(0);
-                
-                // Logging with diagnostics
-                let should_log = last_debug.elapsed().as_secs() >= 3;
-                if should_log {
-                    last_debug = std::time::Instant::now();
-                }
-                
-                let mut debug_stats = (0u32, 0u32, 0u32, 0u32, 0u32); // ctrl_found, pawn_h_ok, pawn_ok, health_ok, added
-                
-                if ent_list != 0 {
-                    // Stride = 112 bytes (0x70) for CEntityIdentity - from working C++ code
-                    const STRIDE: usize = 112;
-                    
-                    // Iterate through player slots (1-64, skip 0 which is world)
-                    for i in 1..=64 {
-                        // Get chunk for this index: entityList + 8 * (i >> 9) + 0x10
-                        // For i < 512, chunk_idx = 0, so we read entityList + 0x10
-                        let chunk_idx = (i & 0x7FFF) >> 9;
-                        let list_entry: usize = mem_clone.read(ent_list + 8 * chunk_idx + 0x10).unwrap_or(0);
-                        if list_entry == 0 { continue; }
-                        
-                        // Controller = entity pointer at list_entry + (i & 0x1FF) * stride
-                        let entry_idx = i & 0x1FF;
-                        let controller: usize = mem_clone.read(list_entry + entry_idx * STRIDE).unwrap_or(0);
-                        if controller == 0 || controller > 0x7FF000000000 { continue; }
-                        debug_stats.0 += 1;
-                        
-                        // Read pawn handle from controller
-                        let pawn_h: u32 = mem_clone.read(controller + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
-                        
-                        // Debug first valid controller with pawn (ONLY ONCE)
-                        if should_log && debug_stats.0 == 1 && unsafe { !FIRST_ENEMY_LOGGED } {
-                            unsafe { FIRST_ENEMY_LOGGED = true; }
-                            info!("First ctrl[{}]: 0x{:X}, pawn_h=0x{:X}", i, controller, pawn_h);
-                        }
-                        
-                        if pawn_h == 0 || pawn_h == 0xFFFFFFFF { continue; }
-                        debug_stats.1 += 1;
-                        
-                        // Get pawn from entity list using pawn handle
-                        let pawn_chunk_idx = (pawn_h as usize & 0x7FFF) >> 9;
-                        let pawn_entry_idx = pawn_h as usize & 0x1FF;
-                        let list_entry2: usize = mem_clone.read(ent_list + 8 * pawn_chunk_idx + 0x10).unwrap_or(0);
-                        if list_entry2 == 0 { continue; }
-                        
-                        let pawn: usize = mem_clone.read(list_entry2 + pawn_entry_idx * STRIDE).unwrap_or(0);
-                        if pawn == 0 || pawn > 0x7FF000000000 { continue; }
-                        debug_stats.2 += 1;
-
-                        // Health check
-                        let health: i32 = mem_clone.read(pawn + game::offsets::netvars::M_I_HEALTH).unwrap_or(0);
-                        
-                        if health <= 0 || health > 100 { continue; }
-                        debug_stats.3 += 1;
-                        
-                        let team: i32 = mem_clone.read(pawn + game::offsets::netvars::M_I_TEAM_NUM).unwrap_or(0);
-                        
-                        // Pos - read from GameSceneNode (Visual interpolation)
-                        let node: usize = mem_clone.read(pawn + game::offsets::netvars::M_P_GAME_SCENE_NODE).unwrap_or(0);
-                        let pos = if node != 0 {
-                            mem_clone.read(node + game::offsets::netvars::M_VEC_ABS_ORIGIN).unwrap_or(Vec3::ZERO)
-                        } else {
-                            // Fallback to m_vOldOrigin if node is missing
-                            mem_clone.read(pawn + game::offsets::netvars::M_V_OLD_ORIGIN).unwrap_or(Vec3::ZERO)
-                        };
-                        
-                        // Debug first pawn with position (ONLY ONCE)
-                        if should_log && debug_stats.4 == 0 && unsafe { !FIRST_ENEMY_LOGGED } {
-                            info!("First player: pawn=0x{:X} health={} team={} pos=({:.0},{:.0},{:.0})", 
-                                  pawn, health, team, pos.x, pos.y, pos.z);
-                        }
-                        
-                        // Skip if position is zero (invalid)
-                        if pos.x == 0.0 && pos.y == 0.0 && pos.z == 0.0 { continue; }
-                        
-                        // Bones (disabled for now)
-                        let bones = [Vec3::ZERO; 30];
-
-                        st.entities.push(game::entity::Entity {
-                            _pawn: pawn, _controller: controller, pos, _health: health, team, _bones: bones
-                        });
-                        debug_stats.4 += 1;
-                    }
-                }
-                        
-                        // Log stats every 3 seconds
-                        if should_log {
-                            info!("Entities: {} | LocalTeam: {}", debug_stats.4, st.local_team);
-                        }
-            }
-            thread::sleep(Duration::from_millis(2));
-        }
-    });
-
-    // 6. Overlay Loop
-    let overlay = overlay::renderer::Direct2DOverlay::new()?;
-    info!("Overlay initialized (Direct2D). Window size: {}x{} | [ESP ONLY - NO MENU]", overlay.width, overlay.height);
-
-    loop {
-        if !overlay.handle_message() { break; }
-        
-        overlay.begin_scene();
-        
-        if let Ok(st) = state.lock() {
-            let mut drawn = 0;
-            let mut skipped_team = 0;
-            let mut skipped_w2s = 0;
-            let mut skipped_size = 0;
-            
-            for ent in &st.entities {
-                // Count teammates but DON'T skip for now (debug)
-                let is_teammate = ent.team == st.local_team;
-                if is_teammate {
-                    skipped_team += 1;
-                    continue; // Re-enable this after testing
-                }
-                
-                let is_enemy = !is_teammate;
-
-                // Box - use pos directly with height offset
-                let feet_pos = ent.pos;
-                let head_pos = Vec3::new(ent.pos.x, ent.pos.y, ent.pos.z + 72.0);
-
-                match (
-                    game::math::w2s(&st.view_matrix, feet_pos, overlay.width as f32, overlay.height as f32),
-                    game::math::w2s(&st.view_matrix, head_pos, overlay.width as f32, overlay.height as f32)
-                ) {
-                    (Some(s_feet), Some(s_head)) => {
-                        let h = s_feet.y - s_head.y;
-                        let w = h * 0.4;
-                        let x = s_head.x - w / 2.0;
-                        let y = s_head.y;
-                        
-                        // W2S debug (ONLY ONCE) - using static flag from memory thread
-                        static mut W2S_LOGGED: bool = false;
-                        if unsafe { !W2S_LOGGED } {
-                            unsafe { W2S_LOGGED = true; }
-                            // Calculate clip coords for debug
-                            let clip_x = st.view_matrix[0][0] * ent.pos.x + st.view_matrix[0][1] * ent.pos.y + st.view_matrix[0][2] * ent.pos.z + st.view_matrix[0][3];
-                            let clip_y = st.view_matrix[1][0] * ent.pos.x + st.view_matrix[1][1] * ent.pos.y + st.view_matrix[1][2] * ent.pos.z + st.view_matrix[1][3];
-                            let clip_w = st.view_matrix[3][0] * ent.pos.x + st.view_matrix[3][1] * ent.pos.y + st.view_matrix[3][2] * ent.pos.z + st.view_matrix[3][3];
-                            
-                            info!("W2S: pos=({:.0},{:.0},{:.0}) clip_x={:.1} clip_y={:.1} clip_w={:.1} -> screen=({:.0},{:.0})", 
-                                  ent.pos.x, ent.pos.y, ent.pos.z, clip_x, clip_y, clip_w, s_head.x, s_head.y);
-                            info!("Matrix[3] (W row): [{:.3},{:.3},{:.3},{:.3}]", 
-                                  st.view_matrix[3][0], st.view_matrix[3][1], st.view_matrix[3][2], st.view_matrix[3][3]);
-                        }
-                        
-                        if h > 5.0 && h < 500.0 {
-                            overlay.draw_box(x, y, w, h, is_enemy);
-                            drawn += 1;
-                        } else {
-                            skipped_size += 1;
-                        }
-                    },
-                    _ => {
-                        skipped_w2s += 1;
-                    }
-                }
-            }
-            
-            // Debug render stats occasionally (only if something interesting)
-            static mut LAST_LOG: u64 = 0;
-            unsafe {
-                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-                if now > LAST_LOG + 5 && (skipped_w2s > 0 || skipped_size > 0) {
-                    LAST_LOG = now;
-                    info!("Render issues: skip_w2s={} skip_size={} (ents={} drawn={})", 
-                          skipped_w2s, skipped_size, st.entities.len(), drawn);
-                }
-            }
-        }
-        
-        overlay.end_scene();
-    }
-
+    info!("Exiting...");
     Ok(())
 }
 
-// Helpers
+// ============================================================================
+// CS2 Attachment
+// ============================================================================
+
+fn attach_to_cs2() -> Result<memory::Memory> {
+    let pid = get_pid("cs2.exe")?;
+    let handle = open_process(pid)?;
+    let client_base = get_module_base(pid, "client.dll")?;
+    
+    Ok(memory::Memory {
+        handle: Arc::new(memory::handle::SendHandle(handle)),
+        _pid: pid,
+        client_base,
+    })
+}
+
+fn verify_offsets(mem: &memory::Memory, offsets: &Offsets) {
+    let test_ent_list: usize = mem.read(mem.client_base + offsets.dw_entity_list).unwrap_or(0);
+    let test_local: usize = mem.read(mem.client_base + offsets.dw_local_player_controller).unwrap_or(0);
+    
+    info!("Offset verification:");
+    info!("  EntityList ptr: 0x{:X} (valid: {})", test_ent_list, test_ent_list > 0x10000000000);
+    info!("  LocalCtrl ptr: 0x{:X} (valid: {})", test_local, test_local > 0x10000000000);
+    
+    if test_ent_list < 0x10000000000 {
+        error!("EntityList pointer invalid! Offsets may be outdated.");
+        error!("Try restarting to fetch fresh offsets from cs2-dumper.");
+    }
+}
+
+// ============================================================================
+// Memory Reading Thread
+// ============================================================================
+
+fn spawn_memory_thread(
+    mem: Arc<memory::Memory>,
+    state: Arc<Mutex<GameState>>,
+    offsets: Arc<Offsets>,
+) {
+    thread::spawn(move || {
+        info!("Memory thread started");
+        let mut last_log = std::time::Instant::now();
+        
+        loop {
+            {
+                let mut st = state.lock();
+                
+                // Read view matrix
+                if let Some(mat) = mem.read::<[[f32; 4]; 4]>(mem.client_base + offsets.dw_view_matrix) {
+                    st.view_matrix = mat;
+                }
+                
+                // Read local player team
+                st.local_team = read_local_team(&mem, &offsets);
+                
+                // Read all entities
+                st.entities.clear();
+                read_entities(&mem, &offsets, &mut st.entities);
+                
+                // Periodic logging
+                if last_log.elapsed().as_secs() >= 5 {
+                    last_log = std::time::Instant::now();
+                    info!("Entities: {} | LocalTeam: {}", st.entities.len(), st.local_team);
+                }
+            }
+            
+            thread::sleep(Duration::from_millis(3));
+        }
+    });
+}
+
+fn read_local_team(mem: &memory::Memory, offsets: &Offsets) -> i32 {
+    const STRIDE: usize = 120; // 0x78
+    
+    let local_ctrl: usize = mem.read(mem.client_base + offsets.dw_local_player_controller).unwrap_or(0);
+    if local_ctrl == 0 || local_ctrl > 0x7FF000000000 {
+        return 0;
+    }
+    
+    let pawn_h: u32 = mem.read(local_ctrl + netvars::M_H_PLAYER_PAWN).unwrap_or(0);
+    if pawn_h == 0 || pawn_h == 0xFFFFFFFF {
+        return 0;
+    }
+    
+    let ent_list: usize = mem.read(mem.client_base + offsets.dw_entity_list).unwrap_or(0);
+    if ent_list == 0 {
+        return 0;
+    }
+    
+    let chunk_idx = (pawn_h as usize & 0x7FFF) >> 9;
+    let entry_idx = pawn_h as usize & 0x1FF;
+    let entry: usize = mem.read(ent_list + 8 * chunk_idx + 0x10).unwrap_or(0);
+    
+    if entry == 0 {
+        return 0;
+    }
+    
+    let pawn: usize = mem.read(entry + entry_idx * STRIDE).unwrap_or(0);
+    if pawn == 0 || pawn > 0x7FF000000000 {
+        return 0;
+    }
+    
+    mem.read(pawn + netvars::M_I_TEAM_NUM).unwrap_or(0)
+}
+
+fn read_entities(mem: &memory::Memory, offsets: &Offsets, entities: &mut Vec<Entity>) {
+    const STRIDE: usize = 120; // 0x78 - CEntityIdentity size
+    
+    let ent_list: usize = mem.read(mem.client_base + offsets.dw_entity_list).unwrap_or(0);
+    if ent_list == 0 {
+        return;
+    }
+    
+    // Iterate player slots (1-64)
+    for i in 1..=64usize {
+        let chunk_idx = (i & 0x7FFF) >> 9;
+        let list_entry: usize = mem.read(ent_list + 8 * chunk_idx + 0x10).unwrap_or(0);
+        if list_entry == 0 { continue; }
+        
+        let entry_idx = i & 0x1FF;
+        let controller: usize = mem.read(list_entry + entry_idx * STRIDE).unwrap_or(0);
+        if controller == 0 || controller > 0x7FF000000000 { continue; }
+        
+        let pawn_h: u32 = mem.read(controller + netvars::M_H_PLAYER_PAWN).unwrap_or(0);
+        if pawn_h == 0 || pawn_h == 0xFFFFFFFF { continue; }
+        
+        // Get pawn from entity list
+        let pawn_chunk_idx = (pawn_h as usize & 0x7FFF) >> 9;
+        let pawn_entry_idx = pawn_h as usize & 0x1FF;
+        let list_entry2: usize = mem.read(ent_list + 8 * pawn_chunk_idx + 0x10).unwrap_or(0);
+        if list_entry2 == 0 { continue; }
+        
+        let pawn: usize = mem.read(list_entry2 + pawn_entry_idx * STRIDE).unwrap_or(0);
+        if pawn == 0 || pawn > 0x7FF000000000 { continue; }
+        
+        // Health check
+        let health: i32 = mem.read(pawn + netvars::M_I_HEALTH).unwrap_or(0);
+        if health <= 0 || health > 100 { continue; }
+        
+        let team: i32 = mem.read(pawn + netvars::M_I_TEAM_NUM).unwrap_or(0);
+        
+        // Position
+        let pos: Vec3 = mem.read(pawn + netvars::M_V_OLD_ORIGIN).unwrap_or(Vec3::ZERO);
+        if pos == Vec3::ZERO { continue; }
+        
+        // Read bones
+        let bones = read_bones(mem, pawn);
+        
+        entities.push(Entity {
+            pawn,
+            controller,
+            pos,
+            health,
+            team,
+            bones,
+        });
+    }
+}
+
+fn read_bones(mem: &memory::Memory, pawn: usize) -> Bones {
+    let mut bones = Bones::default();
+    
+    // Get GameSceneNode
+    let game_scene_node: usize = mem.read(pawn + netvars::M_P_GAME_SCENE_NODE).unwrap_or(0);
+    if game_scene_node == 0 || game_scene_node > 0x7FF000000000 {
+        return bones;
+    }
+    
+    // Get bone array pointer (modelState + boneArray offset)
+    let model_state = game_scene_node + netvars::M_MODEL_STATE;
+    let bone_array: usize = mem.read(model_state + netvars::M_BONE_ARRAY).unwrap_or(0);
+    
+    if bone_array == 0 || bone_array > 0x7FF000000000 {
+        return bones;
+    }
+    
+    // Read bone positions (each bone is a 4x4 matrix, we only need xyz position)
+    // Bone matrix is 48 bytes (12 floats), position is at offset 0, 16, 32 (x, y, z at the 4th element of each row)
+    // Actually in CS2, bones are stored as vec3 + padding = 16 bytes per bone
+    const BONE_SIZE: usize = 32; // sizeof(BoneData) in CS2
+    
+    let read_bone = |index: usize| -> Vec3 {
+        let offset = bone_array + index * BONE_SIZE;
+        mem.read::<Vec3>(offset).unwrap_or(Vec3::ZERO)
+    };
+    
+    bones.head = read_bone(netvars::BONE_HEAD);
+    bones.neck = read_bone(netvars::BONE_NECK);
+    bones.spine_1 = read_bone(netvars::BONE_SPINE_1);
+    bones.spine_2 = read_bone(netvars::BONE_SPINE_2);
+    bones.pelvis = read_bone(netvars::BONE_PELVIS);
+    bones.left_shoulder = read_bone(netvars::BONE_LEFT_SHOULDER);
+    bones.left_elbow = read_bone(netvars::BONE_LEFT_ELBOW);
+    bones.left_hand = read_bone(netvars::BONE_LEFT_HAND);
+    bones.right_shoulder = read_bone(netvars::BONE_RIGHT_SHOULDER);
+    bones.right_elbow = read_bone(netvars::BONE_RIGHT_ELBOW);
+    bones.right_hand = read_bone(netvars::BONE_RIGHT_HAND);
+    bones.left_hip = read_bone(netvars::BONE_LEFT_HIP);
+    bones.left_knee = read_bone(netvars::BONE_LEFT_KNEE);
+    bones.left_foot = read_bone(netvars::BONE_LEFT_FOOT);
+    bones.right_hip = read_bone(netvars::BONE_RIGHT_HIP);
+    bones.right_knee = read_bone(netvars::BONE_RIGHT_KNEE);
+    bones.right_foot = read_bone(netvars::BONE_RIGHT_FOOT);
+    
+    bones
+}
+
+// ============================================================================
+// Input Handling Thread
+// ============================================================================
+
+fn spawn_input_thread(config: Arc<EspConfig>) {
+    thread::spawn(move || {
+        info!("Input thread started");
+        let mut insert_was_pressed = false;
+        let mut end_was_pressed = false;
+        
+        loop {
+            unsafe {
+                // INSERT - Toggle ESP
+                let insert_pressed = GetAsyncKeyState(0x2D) & 0x8000u16 as i16 != 0;
+                if insert_pressed && !insert_was_pressed {
+                    let new_state = !config.enabled.load(Ordering::Relaxed);
+                    config.enabled.store(new_state, Ordering::Relaxed);
+                    info!("ESP: {}", if new_state { "ON" } else { "OFF" });
+                }
+                insert_was_pressed = insert_pressed;
+                
+                // END - Exit
+                let end_pressed = GetAsyncKeyState(0x23) & 0x8000u16 as i16 != 0;
+                if end_pressed && !end_was_pressed {
+                    info!("Exit hotkey pressed");
+                    std::process::exit(0);
+                }
+                end_was_pressed = end_pressed;
+            }
+            
+            thread::sleep(Duration::from_millis(50));
+        }
+    });
+}
+
+// ============================================================================
+// Overlay Loop
+// ============================================================================
+
+fn run_overlay_loop(
+    state: Arc<Mutex<GameState>>,
+    config: Arc<EspConfig>,
+) -> Result<()> {
+    let overlay = overlay::renderer::Direct2DOverlay::new()?;
+    info!("Overlay initialized: {}x{} | Class: {}", 
+          overlay.width, overlay.height, overlay.class_name());
+    
+    let mut frame_count = 0u64;
+    let mut last_fps_time = std::time::Instant::now();
+    
+    loop {
+        // Handle Windows messages
+        if !overlay.handle_message() {
+            break;
+        }
+        
+        // Begin drawing
+        if !overlay.begin_scene() {
+            warn!("Failed to begin scene");
+            continue;
+        }
+        
+        // Only draw if ESP enabled
+        if config.enabled.load(Ordering::Relaxed) {
+            let st = state.lock();
+            
+            for ent in &st.entities {
+                // Skip teammates
+                if ent.team == st.local_team {
+                    continue;
+                }
+                
+                draw_entity(&overlay, ent, &st.view_matrix, &config);
+            }
+        }
+        
+        // End drawing
+        if !overlay.end_scene() {
+            error!("D2D device lost, attempting recovery...");
+            // Could recreate overlay here, but for now just continue
+        }
+        
+        // FPS counter
+        frame_count += 1;
+        if last_fps_time.elapsed().as_secs() >= 10 {
+            let fps = frame_count as f64 / last_fps_time.elapsed().as_secs_f64();
+            info!("Overlay FPS: {:.0}", fps);
+            frame_count = 0;
+            last_fps_time = std::time::Instant::now();
+        }
+        
+        // Small sleep to not hog CPU (targeting ~300 FPS)
+        thread::sleep(Duration::from_micros(3000));
+    }
+    
+    Ok(())
+}
+
+fn draw_entity(
+    overlay: &overlay::renderer::Direct2DOverlay,
+    ent: &Entity,
+    matrix: &[[f32; 4]; 4],
+    config: &EspConfig,
+) {
+    let screen_w = overlay.width as f32;
+    let screen_h = overlay.height as f32;
+    
+    // Calculate box from feet/head positions
+    let feet_pos = ent.pos;
+    let head_pos = if ent.bones.is_valid() {
+        ent.bones.head
+    } else {
+        Vec3::new(ent.pos.x, ent.pos.y, ent.pos.z + 72.0)
+    };
+    
+    let (s_feet, s_head) = match (
+        game::math::w2s(matrix, feet_pos, screen_w, screen_h),
+        game::math::w2s(matrix, head_pos, screen_w, screen_h)
+    ) {
+        (Some(f), Some(h)) => (f, h),
+        _ => return,
+    };
+    
+    let box_h = s_feet.y - s_head.y;
+    let box_w = box_h * 0.4;
+    let box_x = s_head.x - box_w / 2.0;
+    let box_y = s_head.y;
+    
+    // Sanity check
+    if box_h < 5.0 || box_h > 800.0 {
+        return;
+    }
+    
+    // Draw box ESP
+    if config.show_box.load(Ordering::Relaxed) {
+        overlay.draw_box(box_x, box_y, box_w, box_h, true);
+    }
+    
+    // Draw health bar
+    if config.show_health.load(Ordering::Relaxed) {
+        overlay.draw_health_bar(box_x, box_y, box_h, ent.health);
+    }
+    
+    // Draw snaplines
+    if config.show_snaplines.load(Ordering::Relaxed) {
+        overlay.draw_snapline(s_feet.x, s_feet.y);
+    }
+    
+    // Draw skeleton
+    if config.show_skeleton.load(Ordering::Relaxed) && ent.bones.is_valid() {
+        for (from, to) in ent.bones.get_skeleton_lines() {
+            if let (Some(s1), Some(s2)) = (
+                game::math::w2s(matrix, from, screen_w, screen_h),
+                game::math::w2s(matrix, to, screen_w, screen_h)
+            ) {
+                overlay.draw_line(s1.x, s1.y, s2.x, s2.y, true);
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Windows Helpers
+// ============================================================================
+
 fn get_pid(name: &str) -> Result<u32> {
     use windows::Win32::System::Diagnostics::ToolHelp::*;
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
-        let mut entry = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
+        let mut entry = PROCESSENTRY32W { 
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, 
+            ..Default::default() 
+        };
+        
         if Process32FirstW(snapshot, &mut entry).is_ok() {
             loop {
-                let proc_name = String::from_utf16_lossy(&entry.szExeFile[..entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]);
-                if proc_name == name {
+                let proc_name = String::from_utf16_lossy(
+                    &entry.szExeFile[..entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]
+                );
+                if proc_name.eq_ignore_ascii_case(name) {
                     let _ = windows::Win32::Foundation::CloseHandle(snapshot);
                     return Ok(entry.th32ProcessID);
                 }
@@ -313,24 +540,32 @@ fn get_pid(name: &str) -> Result<u32> {
             }
         }
         let _ = windows::Win32::Foundation::CloseHandle(snapshot);
-        Err(anyhow::anyhow!("Process not found"))
+        Err(anyhow::anyhow!("Process '{}' not found", name))
     }
 }
 
 fn open_process(pid: u32) -> Result<windows::Win32::Foundation::HANDLE> {
     use windows::Win32::System::Threading::*;
-    unsafe { Ok(OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, false, pid)?) }
+    unsafe { 
+        Ok(OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, false, pid)?) 
+    }
 }
 
 fn get_module_base(pid: u32, name: &str) -> Result<usize> {
     use windows::Win32::System::Diagnostics::ToolHelp::*;
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid)?;
-        let mut entry = MODULEENTRY32W { dwSize: std::mem::size_of::<MODULEENTRY32W>() as u32, ..Default::default() };
+        let mut entry = MODULEENTRY32W { 
+            dwSize: std::mem::size_of::<MODULEENTRY32W>() as u32, 
+            ..Default::default() 
+        };
+        
         if Module32FirstW(snapshot, &mut entry).is_ok() {
             loop {
-                let mod_name = String::from_utf16_lossy(&entry.szModule[..entry.szModule.iter().position(|&c| c == 0).unwrap_or(0)]);
-                if mod_name == name {
+                let mod_name = String::from_utf16_lossy(
+                    &entry.szModule[..entry.szModule.iter().position(|&c| c == 0).unwrap_or(0)]
+                );
+                if mod_name.eq_ignore_ascii_case(name) {
                     let _ = windows::Win32::Foundation::CloseHandle(snapshot);
                     return Ok(entry.modBaseAddr as usize);
                 }
@@ -338,6 +573,6 @@ fn get_module_base(pid: u32, name: &str) -> Result<usize> {
             }
         }
         let _ = windows::Win32::Foundation::CloseHandle(snapshot);
-        Err(anyhow::anyhow!("Module not found"))
+        Err(anyhow::anyhow!("Module '{}' not found", name))
     }
 }

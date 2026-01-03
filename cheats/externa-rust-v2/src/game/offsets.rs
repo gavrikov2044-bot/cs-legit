@@ -1,22 +1,182 @@
-// Static offsets from dump (2026-01-02 18:37 UTC)
-pub const DW_ENTITY_LIST: usize = 0x1D13CE8;
-pub const DW_LOCAL_PLAYER_CONTROLLER: usize = 0x1E1DC18;
-pub const DW_VIEW_MATRIX: usize = 0x1E323D0;
+//! CS2 Offsets - Multiple fallback methods
+//! Priority: 1) Pattern Scanner  2) cs2-dumper API  3) Hardcoded fallback
 
-// Dynamic offsets struct (kept for compatibility)
+use serde::Deserialize;
+
+// ============================================================================
+// Hardcoded Fallback Offsets (2026-01-03)
+// ============================================================================
+
+pub const DW_ENTITY_LIST: usize = 0x1A146C8;
+pub const DW_LOCAL_PLAYER_CONTROLLER: usize = 0x1A6ED90;
+pub const DW_VIEW_MATRIX: usize = 0x1A84490;
+
+// ============================================================================
+// Offsets Struct
+// ============================================================================
+
+#[derive(Clone, Debug)]
 pub struct Offsets {
     pub dw_entity_list: usize,
     pub dw_local_player_controller: usize,
     pub dw_view_matrix: usize,
 }
 
+impl Default for Offsets {
+    fn default() -> Self {
+        Self {
+            dw_entity_list: DW_ENTITY_LIST,
+            dw_local_player_controller: DW_LOCAL_PLAYER_CONTROLLER,
+            dw_view_matrix: DW_VIEW_MATRIX,
+        }
+    }
+}
+
+impl Offsets {
+    /// Get offsets using multiple methods with fallbacks
+    /// Priority: Pattern Scanner -> cs2-dumper API -> Hardcoded
+    pub fn fetch() -> Self {
+        log::info!("[Offsets] Fetching offsets...");
+        
+        // Method 1: cs2-dumper API (fast, reliable when available)
+        match fetch_from_api() {
+            Ok(offsets) => {
+                log::info!("[Offsets] Loaded from cs2-dumper API");
+                return offsets;
+            }
+            Err(e) => {
+                log::warn!("[Offsets] API fetch failed: {}", e);
+            }
+        }
+        
+        // Method 2: Hardcoded fallback
+        log::warn!("[Offsets] Using HARDCODED fallback offsets!");
+        log::warn!("[Offsets] These may be outdated - consider updating manually");
+        Self::default()
+    }
+    
+    /// Get offsets with pattern scanning (requires PID)
+    pub fn fetch_with_scan(pid: u32) -> Self {
+        log::info!("[Offsets] Fetching offsets with pattern scan...");
+        
+        // Method 1: Pattern Scanner (most reliable, works offline)
+        match crate::memory::scanner::scan_offsets(pid, "client.dll") {
+            Ok(offsets) => {
+                log::info!("[Offsets] Pattern scan successful!");
+                return offsets;
+            }
+            Err(e) => {
+                log::warn!("[Offsets] Pattern scan failed: {}", e);
+            }
+        }
+        
+        // Method 2: cs2-dumper API
+        match fetch_from_api() {
+            Ok(offsets) => {
+                log::info!("[Offsets] Loaded from cs2-dumper API");
+                return offsets;
+            }
+            Err(e) => {
+                log::warn!("[Offsets] API fetch failed: {}", e);
+            }
+        }
+        
+        // Method 3: Hardcoded fallback
+        log::warn!("[Offsets] Using HARDCODED fallback!");
+        Self::default()
+    }
+}
+
+// ============================================================================
+// cs2-dumper API Fetch
+// ============================================================================
+
+#[derive(Deserialize, Debug)]
+struct DumperClientDll {
+    #[serde(rename = "dwEntityList")]
+    dw_entity_list: Option<usize>,
+    #[serde(rename = "dwLocalPlayerController")]
+    dw_local_player_controller: Option<usize>,
+    #[serde(rename = "dwViewMatrix")]
+    dw_view_matrix: Option<usize>,
+}
+
+fn fetch_from_api() -> anyhow::Result<Offsets> {
+    const URL: &str = "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.json";
+    
+    log::info!("[Offsets] Fetching from cs2-dumper...");
+    
+    let response = ureq::get(URL)
+        .timeout(std::time::Duration::from_secs(10))
+        .call()?;
+    
+    let json: serde_json::Value = response.into_json()?;
+    
+    let client = json.get("client.dll")
+        .ok_or_else(|| anyhow::anyhow!("client.dll not found"))?;
+    
+    let entity_list = client.get("dwEntityList")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| anyhow::anyhow!("dwEntityList not found"))? as usize;
+    
+    let local_player = client.get("dwLocalPlayerController")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| anyhow::anyhow!("dwLocalPlayerController not found"))? as usize;
+    
+    let view_matrix = client.get("dwViewMatrix")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| anyhow::anyhow!("dwViewMatrix not found"))? as usize;
+    
+    log::info!("[Offsets] dwEntityList: 0x{:X}", entity_list);
+    log::info!("[Offsets] dwLocalPlayerController: 0x{:X}", local_player);
+    log::info!("[Offsets] dwViewMatrix: 0x{:X}", view_matrix);
+    
+    Ok(Offsets {
+        dw_entity_list: entity_list,
+        dw_local_player_controller: local_player,
+        dw_view_matrix: view_matrix,
+    })
+}
+
+// ============================================================================
+// Netvars (change less frequently)
+// ============================================================================
+
 pub mod netvars {
-    pub const M_I_HEALTH: usize = 0x34C;
-    pub const M_I_TEAM_NUM: usize = 0x3EB;
-    pub const M_P_GAME_SCENE_NODE: usize = 0x330;
-    pub const M_VEC_ABS_ORIGIN: usize = 0xD0; // In GameSceneNode
-    pub const M_V_OLD_ORIGIN: usize = 0x15A0; // Direct on Pawn (alternative)
-    pub const M_H_PLAYER_PAWN: usize = 0x8FC;
-    // pub const M_MODEL_STATE: usize = 0x190; // For bones (not used yet)
-    // pub const M_BONE_ARRAY: usize = 0x80;
+    // C_BaseEntity
+    pub const M_I_HEALTH: usize = 0x344;           // m_iHealth
+    pub const M_I_TEAM_NUM: usize = 0x3E3;         // m_iTeamNum
+    pub const M_P_GAME_SCENE_NODE: usize = 0x328;  // m_pGameSceneNode
+    
+    // C_BasePlayerPawn  
+    pub const M_V_OLD_ORIGIN: usize = 0x1324;      // m_vOldOrigin
+    
+    // CCSPlayerController
+    pub const M_H_PLAYER_PAWN: usize = 0x80C;      // m_hPlayerPawn
+    
+    // CGameSceneNode
+    pub const M_VEC_ABS_ORIGIN: usize = 0xD0;      // m_vecAbsOrigin
+    
+    // CSkeletonInstance / Bones
+    pub const M_MODEL_STATE: usize = 0x170;        // m_modelState
+    pub const M_BONE_ARRAY: usize = 0x80;          // Bone array offset
+    
+    // Bone indices (CS2)
+    pub const BONE_HEAD: usize = 6;
+    pub const BONE_NECK: usize = 5;
+    pub const BONE_SPINE_1: usize = 4;
+    pub const BONE_SPINE_2: usize = 2;
+    pub const BONE_PELVIS: usize = 0;
+    pub const BONE_LEFT_SHOULDER: usize = 8;
+    pub const BONE_LEFT_ELBOW: usize = 9;
+    pub const BONE_LEFT_HAND: usize = 10;
+    pub const BONE_RIGHT_SHOULDER: usize = 13;
+    pub const BONE_RIGHT_ELBOW: usize = 14;
+    pub const BONE_RIGHT_HAND: usize = 15;
+    pub const BONE_LEFT_HIP: usize = 22;
+    pub const BONE_LEFT_KNEE: usize = 23;
+    pub const BONE_LEFT_FOOT: usize = 24;
+    pub const BONE_RIGHT_HIP: usize = 25;
+    pub const BONE_RIGHT_KNEE: usize = 26;
+    pub const BONE_RIGHT_FOOT: usize = 27;
 }

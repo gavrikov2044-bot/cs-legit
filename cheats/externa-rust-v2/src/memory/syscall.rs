@@ -1,72 +1,132 @@
+//! Direct syscall implementation for NtReadVirtualMemory
+//! Uses Halo's Gate technique to find SSN even if hooked
+
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::arch::global_asm;
 use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 use windows::core::PCSTR;
-use std::arch::global_asm;
 
-#[allow(static_mut_refs)]
-static mut SSN_NT_READ: u32 = 0;
+/// Syscall Service Number for NtReadVirtualMemory
+static SSN_NT_READ: AtomicU32 = AtomicU32::new(0);
 
-#[allow(static_mut_refs)]
+/// Initialize syscall by finding SSN
 pub fn init() {
     unsafe {
-        if let Ok(ntdll) = GetModuleHandleA(PCSTR(b"ntdll.dll\0".as_ptr())) {
-            if let Some(func) = GetProcAddress(ntdll, PCSTR(b"NtReadVirtualMemory\0".as_ptr())) {
-                let addr = func as *const u8;
-                
-                // Direct check: 4C 8B D1 B8 ...
-                if *addr == 0x4C && *addr.add(1) == 0x8B && *addr.add(2) == 0xD1 && *addr.add(3) == 0xB8 {
-                    SSN_NT_READ = *(addr.add(4) as *const u32);
-                    log::info!("[Syscall] Direct SSN found: {}", SSN_NT_READ);
+        let Ok(ntdll) = GetModuleHandleA(PCSTR(b"ntdll.dll\0".as_ptr())) else {
+            log::error!("[Syscall] Failed to get ntdll.dll handle");
+            return;
+        };
+        
+        let Some(func) = GetProcAddress(ntdll, PCSTR(b"NtReadVirtualMemory\0".as_ptr())) else {
+            log::error!("[Syscall] Failed to find NtReadVirtualMemory");
+            return;
+        };
+        
+        let addr = func as *const u8;
+        
+        // Method 1: Direct extraction (function not hooked)
+        // Pattern: 4C 8B D1 B8 XX XX XX XX (mov r10, rcx; mov eax, SSN)
+        if check_syscall_pattern(addr) {
+            let ssn = *(addr.add(4) as *const u32);
+            SSN_NT_READ.store(ssn, Ordering::SeqCst);
+            log::info!("[Syscall] Direct SSN: {} (0x{:X})", ssn, ssn);
+            return;
+        }
+        
+        // Method 2: Halo's Gate - check neighboring syscalls
+        // Syscall stubs are typically 32 bytes apart
+        const STUB_SIZE: usize = 32;
+        
+        for i in 1..=32u32 {
+            // Check downward (higher SSN)
+            let down_addr = addr.add(i as usize * STUB_SIZE);
+            if check_syscall_pattern(down_addr) {
+                let neighbor_ssn = *(down_addr.add(4) as *const u32);
+                let ssn = neighbor_ssn.saturating_sub(i);
+                SSN_NT_READ.store(ssn, Ordering::SeqCst);
+                log::info!("[Syscall] Halo's Gate (down): SSN {} from neighbor {}", ssn, neighbor_ssn);
+                return;
+            }
+            
+            // Check upward (lower SSN)
+            if i as usize * STUB_SIZE <= addr as usize {
+                let up_addr = addr.sub(i as usize * STUB_SIZE);
+                if check_syscall_pattern(up_addr) {
+                    let neighbor_ssn = *(up_addr.add(4) as *const u32);
+                    let ssn = neighbor_ssn.saturating_add(i);
+                    SSN_NT_READ.store(ssn, Ordering::SeqCst);
+                    log::info!("[Syscall] Halo's Gate (up): SSN {} from neighbor {}", ssn, neighbor_ssn);
                     return;
                 }
-                
-                // Halo's Gate (Neighbor check)
-                for i in 1..32 {
-                    if let Some(ssn) = check_ssn(addr.add(i * 32)) {
-                        SSN_NT_READ = ssn - i as u32;
-                        log::info!("[Syscall] Neighbor (down) SSN found: {}", SSN_NT_READ);
-                        return;
-                    }
-                    if let Some(ssn) = check_ssn(addr.sub(i * 32)) {
-                        SSN_NT_READ = ssn + i as u32;
-                        log::info!("[Syscall] Neighbor (up) SSN found: {}", SSN_NT_READ);
-                        return;
-                    }
-                }
-                log::warn!("[Syscall] Failed to find SSN!");
             }
         }
+        
+        log::warn!("[Syscall] Failed to find SSN, falling back to WinAPI");
     }
 }
 
-unsafe fn check_ssn(addr: *const u8) -> Option<u32> {
-    if *addr == 0x4C && *addr.add(1) == 0x8B && *addr.add(2) == 0xD1 && *addr.add(3) == 0xB8 {
-        Some(*(addr.add(4) as *const u32))
-    } else {
-        None
-    }
+/// Check if address contains syscall stub pattern
+#[inline]
+unsafe fn check_syscall_pattern(addr: *const u8) -> bool {
+    // Pattern: 4C 8B D1 B8 (mov r10, rcx; mov eax, imm32)
+    *addr == 0x4C 
+        && *addr.add(1) == 0x8B 
+        && *addr.add(2) == 0xD1 
+        && *addr.add(3) == 0xB8
 }
 
+/// Check if syscall is available
+#[inline]
 pub fn is_active() -> bool {
-    unsafe { SSN_NT_READ != 0 }
+    SSN_NT_READ.load(Ordering::Relaxed) != 0
 }
 
-pub unsafe fn nt_read(handle: *mut c_void, base: *const c_void, buffer: *mut c_void, size: usize) -> i32 {
-    syscall_stub(handle, base, buffer, size, std::ptr::null_mut(), SSN_NT_READ)
+/// Get current SSN (for debugging)
+#[inline]
+pub fn get_ssn() -> u32 {
+    SSN_NT_READ.load(Ordering::Relaxed)
+}
+
+/// Direct syscall to NtReadVirtualMemory
+/// 
+/// # Safety
+/// Caller must ensure valid handle and memory regions
+#[inline]
+pub unsafe fn nt_read(
+    handle: *mut c_void, 
+    base: *const c_void, 
+    buffer: *mut c_void, 
+    size: usize
+) -> i32 {
+    let ssn = SSN_NT_READ.load(Ordering::Relaxed);
+    if ssn == 0 {
+        return -1; // STATUS_UNSUCCESSFUL
+    }
+    syscall_stub(handle, base, buffer, size, std::ptr::null_mut(), ssn)
 }
 
 extern "C" {
-    fn syscall_stub(h: *mut c_void, b: *const c_void, buf: *mut c_void, s: usize, w: *mut c_void, ssn: u32) -> i32;
+    fn syscall_stub(
+        handle: *mut c_void, 
+        base: *const c_void, 
+        buffer: *mut c_void, 
+        size: usize, 
+        bytes_read: *mut usize,
+        ssn: u32
+    ) -> i32;
 }
 
+/// x86_64 syscall stub
+/// Arguments: RCX, RDX, R8, R9, [RSP+0x28], [RSP+0x30]
+/// NtReadVirtualMemory(Handle, BaseAddress, Buffer, Size, BytesRead)
 #[cfg(target_arch = "x86_64")]
 global_asm!(
     ".section .text",
     ".global syscall_stub",
     "syscall_stub:",
-    "mov r10, rcx",
-    "mov eax, [rsp + 48]",
+    "mov r10, rcx",           // Handle -> r10 (syscall convention)
+    "mov eax, dword ptr [rsp + 48]",  // SSN from stack (6th arg)
     "syscall",
     "ret"
 );
-
