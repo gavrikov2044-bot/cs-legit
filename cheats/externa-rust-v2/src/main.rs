@@ -531,9 +531,17 @@ fn run_overlay_loop(
         
         // Only draw if ESP enabled
         if config.enabled.load(Ordering::Relaxed) {
+            if frame_count < 3 {
+                info!("[Render] Frame {} - reading ViewMatrix", frame_count);
+            }
+            
             // 1. Read ViewMatrix FIRST (like DragonBurn UpdateGameState)
             let view_matrix: [[f32; 4]; 4] = mem.read(mem.client_base + offsets.dw_view_matrix)
                 .unwrap_or([[0.0; 4]; 4]);
+            
+            if frame_count < 3 {
+                info!("[Render] Frame {} - getting entities", frame_count);
+            }
             
             // 2. Get cached data from memory thread (team, health, bone_array rarely change)
             let (local_team, entity_pawns): (i32, Vec<(usize, i32, i32, usize)>) = {
@@ -545,8 +553,13 @@ fn run_overlay_loop(
                 (st.local_team, pawns)
             };
             
+            if frame_count < 3 {
+                info!("[Render] Frame {} - drawing {} entities", frame_count, entity_pawns.len());
+            }
+            
             // 3. For each entity, read ALL bones fresh, then draw IMMEDIATELY
             // This matches DragonBurn's pattern: read -> W2S -> draw in tight sequence
+            let mut drawn = 0;
             for (_pawn, team, cached_health, cached_bone_array) in entity_pawns {
                 // Skip teammates
                 if local_team != 0 && team == local_team {
@@ -573,6 +586,11 @@ fn run_overlay_loop(
                     &view_matrix, 
                     &config
                 );
+                drawn += 1;
+            }
+            
+            if frame_count < 3 {
+                info!("[Render] Frame {} - drew {} entities", frame_count, drawn);
             }
         }
         
