@@ -151,6 +151,33 @@ fn main() -> Result<()> {
 // ============================================================================
 
 fn attach_to_cs2() -> Result<memory::Memory> {
+    // Try kernel driver first (much faster!)
+    if let Some(mut driver) = memory::driver::DriverReader::connect() {
+        info!("[Driver] Kernel driver detected - using ultra-fast mode!");
+        
+        // Get PID and module base via driver
+        let pid = get_pid("cs2.exe")?;
+        
+        if driver.attach(pid) {
+            if let Some(client_base) = driver.get_module_base(pid, "client.dll") {
+                info!("[Driver] client.dll base: 0x{:X}", client_base);
+                
+                // Still need a process handle for fallback
+                let handle = open_process(pid)?;
+                
+                return Ok(memory::Memory {
+                    handle: Arc::new(memory::handle::SendHandle(handle)),
+                    _pid: pid,
+                    client_base,
+                    driver: Some(Arc::new(parking_lot::Mutex::new(driver))),
+                });
+            }
+        }
+        warn!("[Driver] Failed to attach via driver, falling back to usermode");
+    }
+    
+    // Fallback to standard usermode approach
+    info!("[Memory] Using usermode memory reading (syscall + ReadProcessMemory)");
     let pid = get_pid("cs2.exe")?;
     let handle = open_process(pid)?;
     let client_base = get_module_base(pid, "client.dll")?;
@@ -159,6 +186,7 @@ fn attach_to_cs2() -> Result<memory::Memory> {
         handle: Arc::new(memory::handle::SendHandle(handle)),
         _pid: pid,
         client_base,
+        driver: None,
     })
 }
 
@@ -428,11 +456,11 @@ fn run_overlay_loop(
     let mut frame_count = 0u64;
     let mut last_fps_time = std::time::Instant::now();
     
-    // Target: ~143 FPS (7ms per frame)
-    let tick = Duration::from_millis(7);
+    // No artificial delay - render as fast as possible!
+    // D2D Present will sync with display naturally
     
     loop {
-        let frame_start = std::time::Instant::now();
+        let _frame_start = std::time::Instant::now();
         
         // Handle Windows messages
         if !overlay.handle_message() {
@@ -506,44 +534,58 @@ fn run_overlay_loop(
             last_fps_time = std::time::Instant::now();
         }
         
-        // Precise timing: sleep remaining time to hit 7ms tick
-        let elapsed = frame_start.elapsed();
-        let sleep_time = tick.saturating_sub(elapsed);
-        thread::sleep(sleep_time);
+        // Minimal sleep to prevent 100% CPU usage
+        // D2D Present naturally syncs with compositor
+        thread::sleep(Duration::from_micros(100));
     }
     
     Ok(())
 }
 
-/// Read ALL bones fresh from bone_array (optimized batch read)
-/// DragonBurn reads 30 bones × 32 bytes in ONE call - we do the same
+/// Read ALL bones in ONE memory read (DragonBurn optimization)
+/// Reads 30 bones × 32 bytes = 960 bytes in single ReadProcessMemory call
 fn read_bones_fresh(mem: &memory::Memory, bone_array: usize) -> Bones {
     const BONE_SIZE: usize = 32;
+    const NUM_BONES: usize = 30;  // CS2 has 30 bones
+    const TOTAL_SIZE: usize = NUM_BONES * BONE_SIZE;  // 960 bytes
     
-    // Read all bone data at once (17 bones × 32 bytes = 544 bytes)
-    // This is much faster than 17 separate reads
-    let read_bone = |index: usize| -> Vec3 {
-        mem.read::<Vec3>(bone_array + index * BONE_SIZE).unwrap_or(Vec3::ZERO)
+    // Read ALL bone data in ONE call (massive speedup!)
+    let mut buffer = [0u8; TOTAL_SIZE];
+    if !mem.read_raw(bone_array, &mut buffer) {
+        return Bones::default();
+    }
+    
+    // Extract Vec3 from buffer at given bone index
+    let extract_bone = |index: usize| -> Vec3 {
+        let offset = index * BONE_SIZE;
+        if offset + 12 > TOTAL_SIZE {
+            return Vec3::ZERO;
+        }
+        // Vec3 is first 12 bytes of each 32-byte bone struct
+        let x = f32::from_le_bytes([buffer[offset], buffer[offset+1], buffer[offset+2], buffer[offset+3]]);
+        let y = f32::from_le_bytes([buffer[offset+4], buffer[offset+5], buffer[offset+6], buffer[offset+7]]);
+        let z = f32::from_le_bytes([buffer[offset+8], buffer[offset+9], buffer[offset+10], buffer[offset+11]]);
+        Vec3::new(x, y, z)
     };
     
     Bones {
-        head: read_bone(netvars::BONE_HEAD),
-        neck: read_bone(netvars::BONE_NECK),
-        spine_1: read_bone(netvars::BONE_SPINE_1),
-        spine_2: read_bone(netvars::BONE_SPINE_2),
-        pelvis: read_bone(netvars::BONE_PELVIS),
-        left_shoulder: read_bone(netvars::BONE_LEFT_SHOULDER),
-        left_elbow: read_bone(netvars::BONE_LEFT_ELBOW),
-        left_hand: read_bone(netvars::BONE_LEFT_HAND),
-        right_shoulder: read_bone(netvars::BONE_RIGHT_SHOULDER),
-        right_elbow: read_bone(netvars::BONE_RIGHT_ELBOW),
-        right_hand: read_bone(netvars::BONE_RIGHT_HAND),
-        left_hip: read_bone(netvars::BONE_LEFT_HIP),
-        left_knee: read_bone(netvars::BONE_LEFT_KNEE),
-        left_foot: read_bone(netvars::BONE_LEFT_FOOT),
-        right_hip: read_bone(netvars::BONE_RIGHT_HIP),
-        right_knee: read_bone(netvars::BONE_RIGHT_KNEE),
-        right_foot: read_bone(netvars::BONE_RIGHT_FOOT),
+        head: extract_bone(netvars::BONE_HEAD),
+        neck: extract_bone(netvars::BONE_NECK),
+        spine_1: extract_bone(netvars::BONE_SPINE_1),
+        spine_2: extract_bone(netvars::BONE_SPINE_2),
+        pelvis: extract_bone(netvars::BONE_PELVIS),
+        left_shoulder: extract_bone(netvars::BONE_LEFT_SHOULDER),
+        left_elbow: extract_bone(netvars::BONE_LEFT_ELBOW),
+        left_hand: extract_bone(netvars::BONE_LEFT_HAND),
+        right_shoulder: extract_bone(netvars::BONE_RIGHT_SHOULDER),
+        right_elbow: extract_bone(netvars::BONE_RIGHT_ELBOW),
+        right_hand: extract_bone(netvars::BONE_RIGHT_HAND),
+        left_hip: extract_bone(netvars::BONE_LEFT_HIP),
+        left_knee: extract_bone(netvars::BONE_LEFT_KNEE),
+        left_foot: extract_bone(netvars::BONE_LEFT_FOOT),
+        right_hip: extract_bone(netvars::BONE_RIGHT_HIP),
+        right_knee: extract_bone(netvars::BONE_RIGHT_KNEE),
+        right_foot: extract_bone(netvars::BONE_RIGHT_FOOT),
     }
 }
 

@@ -22,6 +22,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::Graphics::Dwm::DwmFlush;
 
 pub struct Direct2DOverlay {
     #[allow(dead_code)]
@@ -160,7 +161,13 @@ impl Direct2DOverlay {
     pub fn end_scene(&self) -> bool {
         unsafe {
             // EndDraw returns error if device lost
-            self.target.EndDraw(None, None).is_ok()
+            let result = self.target.EndDraw(None, None).is_ok();
+            
+            // Sync with Desktop Window Manager for smoother display
+            // This waits for the next VBlank, reducing tearing and improving sync
+            let _ = DwmFlush();
+            
+            result
         }
     }
 
