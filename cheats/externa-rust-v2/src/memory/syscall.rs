@@ -6,6 +6,7 @@ use std::arch::global_asm;
 #[allow(static_mut_refs)]
 static mut SSN_NT_READ: u32 = 0;
 
+#[allow(static_mut_refs)]
 pub fn init() {
     unsafe {
         if let Ok(ntdll) = GetModuleHandleA(PCSTR(b"ntdll.dll\0".as_ptr())) {

@@ -110,6 +110,7 @@ impl Direct2DOverlay {
         }
     }
 
+    #[allow(dead_code)]
     pub fn draw_line(&self, x1: f32, y1: f32, x2: f32, y2: f32, enemy: bool) {
         unsafe {
             let brush = if enemy { &self.brush_enemy } else { &self.brush_team };
