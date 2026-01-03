@@ -150,7 +150,8 @@ pub mod netvars {
     pub const M_P_GAME_SCENE_NODE: usize = 0x330;  // m_pGameSceneNode
     
     // C_BasePlayerPawn  
-    pub const M_V_OLD_ORIGIN: usize = 0x15A0;      // m_vOldOrigin
+    #[allow(dead_code)]
+    pub const M_V_OLD_ORIGIN: usize = 0x15A0;      // m_vOldOrigin (legacy, use bones instead)
     
     // CCSPlayerController
     pub const M_H_PLAYER_PAWN: usize = 0x8FC;      // m_hPlayerPawn
