@@ -308,6 +308,10 @@ fn read_entities(mem: &memory::Memory, offsets: &Offsets, entities: &mut Vec<Ent
         if pos == Vec3::ZERO { continue; }
         stats.5 += 1;
         
+        // Cache bone_array pointer (used for fast render-time reads)
+        let model_state = game_scene_node + netvars::M_MODEL_STATE;
+        let bone_array: usize = mem.read(model_state + netvars::M_BONE_ARRAY).unwrap_or(0);
+        
         // Read bones (pass game_scene_node to avoid double-read)
         let bones = read_bones_from_node(mem, game_scene_node);
         
@@ -318,6 +322,7 @@ fn read_entities(mem: &memory::Memory, offsets: &Offsets, entities: &mut Vec<Ent
             health,
             team,
             bones,
+            bone_array,
         });
     }
     
@@ -442,60 +447,48 @@ fn run_overlay_loop(
         
         // Only draw if ESP enabled
         if config.enabled.load(Ordering::Relaxed) {
-            // Read EVERYTHING at render time for perfect sync
+            // 1. Read ViewMatrix FIRST (like DragonBurn UpdateGameState)
             let view_matrix: [[f32; 4]; 4] = mem.read(mem.client_base + offsets.dw_view_matrix)
                 .unwrap_or([[0.0; 4]; 4]);
             
-            // Get local team and entity list from cached state (these change rarely)
-            let (local_team, entity_pawns): (i32, Vec<(usize, i32)>) = {
+            // 2. Get cached data from memory thread (team, health, bone_array rarely change)
+            let (local_team, entity_pawns): (i32, Vec<(usize, i32, i32, usize)>) = {
                 let st = state.lock();
-                let pawns: Vec<(usize, i32)> = st.entities.iter()
+                let pawns: Vec<(usize, i32, i32, usize)> = st.entities.iter()
                     .filter(|e| e.health > 0)
-                    .map(|e| (e.pawn, e.team))
+                    .map(|e| (e.pawn, e.team, e.health, e.bone_array))
                     .collect();
                 (st.local_team, pawns)
             };
             
-            // For each entity, read FRESH bone positions at render time
-            for (pawn, team) in entity_pawns {
+            // 3. For each entity, read ALL bones fresh, then draw IMMEDIATELY
+            // This matches DragonBurn's pattern: read -> W2S -> draw in tight sequence
+            for (_pawn, team, cached_health, cached_bone_array) in entity_pawns {
                 // Skip teammates
                 if local_team != 0 && team == local_team {
                     continue;
                 }
                 
-                // Read GameSceneNode FRESH
-                let game_scene_node: usize = mem.read(pawn + netvars::M_P_GAME_SCENE_NODE).unwrap_or(0);
-                if game_scene_node == 0 { continue; }
+                if cached_bone_array == 0 {
+                    continue;
+                }
                 
-                // Get bone array pointer
-                let model_state = game_scene_node + netvars::M_MODEL_STATE;
-                let bone_array: usize = mem.read(model_state + netvars::M_BONE_ARRAY).unwrap_or(0);
+                // Read ALL bones in ONE batch (DragonBurn reads 30 bones × 32 bytes)
+                // We read only the 17 bones we need
+                let bones = read_bones_fresh(&mem, cached_bone_array);
                 
-                // Read ALL positions from SAME source (bone array) for perfect sync
-                const BONE_SIZE: usize = 32;
+                if !bones.is_valid() {
+                    continue;
+                }
                 
-                let (feet_pos, head_pos) = if bone_array != 0 {
-                    // Use left foot for feet position, head for head
-                    let head = mem.read::<Vec3>(bone_array + netvars::BONE_HEAD * BONE_SIZE).unwrap_or(Vec3::ZERO);
-                    let left_foot = mem.read::<Vec3>(bone_array + netvars::BONE_LEFT_FOOT * BONE_SIZE).unwrap_or(Vec3::ZERO);
-                    
-                    if head == Vec3::ZERO || left_foot == Vec3::ZERO {
-                        continue; // Skip if bones invalid
-                    }
-                    
-                    (left_foot, head)
-                } else {
-                    // Fallback to m_vecAbsOrigin if no bones
-                    let pos: Vec3 = mem.read(game_scene_node + 0xD0).unwrap_or(Vec3::ZERO);
-                    if pos == Vec3::ZERO { continue; }
-                    (pos, pos + Vec3::new(0.0, 0.0, 72.0))
-                };
-                
-                // Read health FRESH
-                let health: i32 = mem.read(pawn + netvars::M_I_HEALTH).unwrap_or(100);
-                
-                // Draw immediately with fresh data - BOTH positions from same source
-                draw_entity_fresh(&overlay, feet_pos, head_pos, health, &view_matrix, &config);
+                // Draw immediately with fresh data
+                draw_entity_complete(
+                    &overlay, 
+                    &bones, 
+                    cached_health, 
+                    &view_matrix, 
+                    &config
+                );
             }
         }
         
@@ -522,11 +515,43 @@ fn run_overlay_loop(
     Ok(())
 }
 
-/// Draw entity with FRESH data (read at render time)
-fn draw_entity_fresh(
+/// Read ALL bones fresh from bone_array (optimized batch read)
+/// DragonBurn reads 30 bones × 32 bytes in ONE call - we do the same
+fn read_bones_fresh(mem: &memory::Memory, bone_array: usize) -> Bones {
+    const BONE_SIZE: usize = 32;
+    
+    // Read all bone data at once (17 bones × 32 bytes = 544 bytes)
+    // This is much faster than 17 separate reads
+    let read_bone = |index: usize| -> Vec3 {
+        mem.read::<Vec3>(bone_array + index * BONE_SIZE).unwrap_or(Vec3::ZERO)
+    };
+    
+    Bones {
+        head: read_bone(netvars::BONE_HEAD),
+        neck: read_bone(netvars::BONE_NECK),
+        spine_1: read_bone(netvars::BONE_SPINE_1),
+        spine_2: read_bone(netvars::BONE_SPINE_2),
+        pelvis: read_bone(netvars::BONE_PELVIS),
+        left_shoulder: read_bone(netvars::BONE_LEFT_SHOULDER),
+        left_elbow: read_bone(netvars::BONE_LEFT_ELBOW),
+        left_hand: read_bone(netvars::BONE_LEFT_HAND),
+        right_shoulder: read_bone(netvars::BONE_RIGHT_SHOULDER),
+        right_elbow: read_bone(netvars::BONE_RIGHT_ELBOW),
+        right_hand: read_bone(netvars::BONE_RIGHT_HAND),
+        left_hip: read_bone(netvars::BONE_LEFT_HIP),
+        left_knee: read_bone(netvars::BONE_LEFT_KNEE),
+        left_foot: read_bone(netvars::BONE_LEFT_FOOT),
+        right_hip: read_bone(netvars::BONE_RIGHT_HIP),
+        right_knee: read_bone(netvars::BONE_RIGHT_KNEE),
+        right_foot: read_bone(netvars::BONE_RIGHT_FOOT),
+    }
+}
+
+/// Draw entity with complete ESP (box, skeleton, health, snaplines)
+/// Uses fresh bone data read at render time for perfect sync
+fn draw_entity_complete(
     overlay: &overlay::renderer::Direct2DOverlay,
-    feet_pos: Vec3,
-    head_pos: Vec3,
+    bones: &Bones,
     health: i32,
     matrix: &[[f32; 4]; 4],
     config: &EspConfig,
@@ -534,6 +559,11 @@ fn draw_entity_fresh(
     let screen_w = overlay.width as f32;
     let screen_h = overlay.height as f32;
     
+    // Use left_foot for feet position (from bone array - same source as head)
+    let feet_pos = bones.left_foot;
+    let head_pos = bones.head;
+    
+    // W2S transform
     let (s_feet, s_head) = match (
         game::math::w2s(matrix, feet_pos, screen_w, screen_h),
         game::math::w2s(matrix, head_pos, screen_w, screen_h)
@@ -542,6 +572,7 @@ fn draw_entity_fresh(
         _ => return,
     };
     
+    // Box calculation (DragonBurn style)
     let box_h = s_feet.y - s_head.y;
     let box_w = box_h * 0.4;
     let box_x = s_head.x - box_w / 2.0;
@@ -550,6 +581,18 @@ fn draw_entity_fresh(
     // Sanity check
     if box_h < 5.0 || box_h > 800.0 {
         return;
+    }
+    
+    // Draw skeleton FIRST (behind box)
+    if config.show_skeleton.load(Ordering::Relaxed) {
+        for (from, to) in bones.get_skeleton_lines() {
+            if let (Some(s1), Some(s2)) = (
+                game::math::w2s(matrix, from, screen_w, screen_h),
+                game::math::w2s(matrix, to, screen_w, screen_h)
+            ) {
+                overlay.draw_line(s1.x, s1.y, s2.x, s2.y, true);
+            }
+        }
     }
     
     // Draw box ESP

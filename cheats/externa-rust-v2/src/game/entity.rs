@@ -63,7 +63,6 @@ impl Bones {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Entity {
-    #[allow(dead_code)]
     pub pawn: usize,
     #[allow(dead_code)]
     pub controller: usize,
@@ -71,4 +70,5 @@ pub struct Entity {
     pub health: i32,
     pub team: i32,
     pub bones: Bones,
+    pub bone_array: usize,  // Cached bone array pointer for fast render-time reads
 }
