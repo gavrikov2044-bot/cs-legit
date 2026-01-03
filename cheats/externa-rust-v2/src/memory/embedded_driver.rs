@@ -119,9 +119,12 @@ impl EmbeddedDriver {
             return Ok(false);
         }
         
-        // Загружаем через kdmapper
+        // Загружаем через kdmapper (передаём ОБА пути)
         log::info!("[Embedded] Loading driver via kdmapper...");
-        match super::kdmapper::load_driver(&self.laith_path.to_string_lossy()) {
+        match super::kdmapper::load_driver_with_intel(
+            &self.laith_path.to_string_lossy(),
+            &self.intel_path.to_string_lossy()
+        ) {
             Ok(_) => {
                 log::info!("[Embedded] ✓ Driver loaded successfully!");
                 DRIVER_LOADED.store(true, Ordering::SeqCst);

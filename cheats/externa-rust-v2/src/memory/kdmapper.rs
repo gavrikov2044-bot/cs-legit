@@ -549,6 +549,8 @@ pub struct KDMapper {
     scm: Option<SC_HANDLE>,
     temp_path: PathBuf,
     kernel: Option<KernelMemory>,
+    /// Explicit path to Intel driver (if provided)
+    pub intel_driver_path: Option<PathBuf>,
 }
 
 impl KDMapper {
@@ -559,6 +561,7 @@ impl KDMapper {
             scm: None,
             temp_path: std::env::temp_dir(),
             kernel: None,
+            intel_driver_path: None,
         }
     }
     
@@ -675,11 +678,20 @@ impl KDMapper {
     
     /// Find Intel driver file
     fn find_intel_driver(&self) -> Result<Vec<u8>, String> {
+        // Check explicit path first (from embedded drivers)
+        if let Some(ref explicit_path) = self.intel_driver_path {
+            if explicit_path.exists() {
+                log::info!("[KDMapper] Using provided Intel driver: {:?}", explicit_path);
+                return fs::read(explicit_path).map_err(|e| e.to_string());
+            }
+        }
+        
         let search_paths = [
             std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.join("iqvw64e.sys"))),
             std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.join("driver/iqvw64e.sys"))),
             Some(std::env::current_dir().unwrap_or_default().join("iqvw64e.sys")),
             Some(PathBuf::from("iqvw64e.sys")),
+            Some(std::env::temp_dir().join("externa_drv").join("iqvw64e.sys")), // Check temp folder
         ];
         
         for path in search_paths.iter().flatten() {
@@ -833,6 +845,13 @@ impl Drop for KDMapper {
 /// Load driver using kdmapper-style technique
 pub fn load_driver(driver_path: &str) -> Result<u64, String> {
     let mut mapper = KDMapper::new();
+    mapper.map_driver(driver_path)
+}
+
+/// Load driver with explicit Intel driver path
+pub fn load_driver_with_intel(driver_path: &str, intel_path: &str) -> Result<u64, String> {
+    let mut mapper = KDMapper::new();
+    mapper.intel_driver_path = Some(PathBuf::from(intel_path));
     mapper.map_driver(driver_path)
 }
 
