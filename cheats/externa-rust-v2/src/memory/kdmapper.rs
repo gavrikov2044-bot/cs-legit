@@ -825,10 +825,9 @@ impl KDMapper {
             }
         }
         
-        // Delete temp files
-        let _ = fs::remove_file(self.temp_path.join("iqvw64e.sys"));
-        
-        log::info!("[KDMapper] Cleanup complete");
+        // Delete temp files - disabled for debugging
+        // let _ = fs::remove_file(self.temp_path.join("iqvw64e.sys"));
+        log::info!("[KDMapper] Cleanup complete (files kept for debug)");
     }
 }
 
