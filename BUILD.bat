@@ -1,164 +1,152 @@
 @echo off
-chcp 65001 >nul
 setlocal enabledelayedexpansion
+chcp 65001 >nul 2>&1
+cd /d "%~dp0"
 
-echo ╔══════════════════════════════════════════════════════════════╗
-echo ║           Externa CS2 ESP - Full Build Script                ║
-echo ╠══════════════════════════════════════════════════════════════╣
-echo ║  This script builds:                                         ║
-echo ║  1. Kernel Driver (laithdriver.sys)                         ║
-echo ║  2. Rust Cheat with embedded drivers                        ║
-echo ╚══════════════════════════════════════════════════════════════╝
+echo.
+echo ========================================
+echo    EXTERNA CS2 - BUILD SCRIPT
+echo ========================================
 echo.
 
-:: Check for Visual Studio
-set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
-if not exist "%VSWHERE%" (
-    echo [ERROR] Visual Studio not found!
-    echo Download from: https://visualstudio.microsoft.com/
-    pause
-    exit /b 1
-)
-
-:: Find MSBuild
-for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe`) do (
-    set "MSBUILD=%%i"
-)
-
-if not defined MSBUILD (
-    echo [ERROR] MSBuild not found!
-    pause
-    exit /b 1
-)
-echo [OK] Found MSBuild: %MSBUILD%
-
-:: Check for WDK
-set "WDK_PATH=%ProgramFiles(x86)%\Windows Kits\10\Include"
-if not exist "%WDK_PATH%" (
-    echo [WARNING] Windows Driver Kit not found!
-    echo Download from: https://docs.microsoft.com/windows-hardware/drivers/download-the-wdk
-    echo.
-    echo Skipping driver build...
-    goto :skip_driver
-)
-echo [OK] Found WDK
-
-:: Build Driver
-echo.
-echo ══════════════════════════════════════════════════════════════
-echo   Building Kernel Driver...
-echo ══════════════════════════════════════════════════════════════
-cd /d "%~dp0laith-km-driver"
-"%MSBUILD%" Driver.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
-
-if %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] Driver build failed!
-    goto :skip_driver
-)
-
-:: Find built driver
-set "DRIVER_SYS="
-for /r %%f in (*.sys) do (
-    set "DRIVER_SYS=%%f"
-)
-
-if defined DRIVER_SYS (
-    echo [OK] Driver built: %DRIVER_SYS%
-    
-    :: Copy to assets
-    if not exist "%~dp0cheats\externa-rust-v2\assets" mkdir "%~dp0cheats\externa-rust-v2\assets"
-    copy "%DRIVER_SYS%" "%~dp0cheats\externa-rust-v2\assets\laithdriver.sys" >nul
-    echo [OK] Copied to assets folder
-) else (
-    echo [WARNING] Driver .sys file not found
-)
-
-:skip_driver
-
-:: Check for Intel driver
-echo.
-if not exist "%~dp0cheats\externa-rust-v2\assets\iqvw64e.sys" (
-    echo [WARNING] Intel driver (iqvw64e.sys) not found!
-    echo.
-    echo Download from: https://github.com/TheCruZ/kdmapper/releases
-    echo Place in: cheats\externa-rust-v2\assets\iqvw64e.sys
-    echo.
-    echo Building without embedded drivers...
-    set "BUILD_EMBEDDED=false"
-) else (
-    echo [OK] Intel driver found
-    set "BUILD_EMBEDDED=true"
-)
-
-:: Check for Rust
-echo.
+REM Check Rust
 where cargo >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
+if %ERRORLEVEL% neq 0 (
     echo [ERROR] Rust not found!
-    echo Install from: https://rustup.rs/
+    echo Install from: https://rustup.rs
     pause
     exit /b 1
 )
-echo [OK] Found Rust
+echo [OK] Rust found
 
-:: Build Rust Cheat
-echo.
-echo ══════════════════════════════════════════════════════════════
-echo   Building Rust Cheat...
-echo ══════════════════════════════════════════════════════════════
-cd /d "%~dp0cheats\externa-rust-v2"
+REM Check Visual Studio
+set "VS_PATH="
+if exist "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" (
+    set "VS_PATH=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+)
+if exist "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat" (
+    set "VS_PATH=C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat"
+)
+if exist "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" (
+    set "VS_PATH=C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+)
 
-:: Check if we can embed
-set "LAITH_EXISTS=false"
-set "INTEL_EXISTS=false"
-if exist "assets\laithdriver.sys" set "LAITH_EXISTS=true"
-if exist "assets\iqvw64e.sys" set "INTEL_EXISTS=true"
-
-if "%LAITH_EXISTS%"=="true" if "%INTEL_EXISTS%"=="true" (
-    echo [INFO] Building with EMBEDDED drivers...
-    cargo build --release --features embed_drivers
-    set "OUTPUT_NAME=Externa-CS2-FULL.exe"
+if defined VS_PATH (
+    echo [OK] Visual Studio 2022 found
 ) else (
-    echo [INFO] Building STANDARD version (syscall mode)...
-    cargo build --release
-    set "OUTPUT_NAME=Externa-CS2.exe"
+    echo [WARN] Visual Studio 2022 not found - driver build will be skipped
 )
 
-if %ERRORLEVEL% NEQ 0 (
+REM Check WDK
+set "WDK_FOUND=0"
+if exist "C:\Program Files (x86)\Windows Kits\10\Include" (
+    set "WDK_FOUND=1"
+    echo [OK] Windows Driver Kit found
+) else (
+    echo [WARN] WDK not found - driver build will be skipped
+)
+
+REM Check Intel driver
+set "INTEL_EXISTS=0"
+if exist "cheats\externa-rust-v2\assets\iqvw64e.sys" (
+    set "INTEL_EXISTS=1"
+    echo [OK] Intel driver found
+) else (
+    echo [WARN] iqvw64e.sys not found in cheats\externa-rust-v2\assets\
+    echo        Download from: https://github.com/TheCruZ/kdmapper/releases
+)
+
+echo.
+echo ----------------------------------------
+echo    STEP 1: Build Kernel Driver
+echo ----------------------------------------
+echo.
+
+set "DRIVER_BUILT=0"
+if defined VS_PATH if "%WDK_FOUND%"=="1" (
+    if exist "driver\laithdriver\laithdriver.sln" (
+        echo Building driver...
+        call "%VS_PATH%"
+        msbuild "driver\laithdriver\laithdriver.sln" /p:Configuration=Release /p:Platform=x64 /t:Build /v:minimal
+        if exist "driver\laithdriver\x64\Release\laithdriver.sys" (
+            echo [OK] Driver built successfully
+            set "DRIVER_BUILT=1"
+            
+            REM Copy to assets
+            if not exist "cheats\externa-rust-v2\assets" mkdir "cheats\externa-rust-v2\assets"
+            copy /Y "driver\laithdriver\x64\Release\laithdriver.sys" "cheats\externa-rust-v2\assets\" >nul
+            echo [OK] Driver copied to assets
+        ) else (
+            echo [ERROR] Driver build failed
+        )
+    ) else (
+        echo [SKIP] Driver project not found
+    )
+) else (
+    echo [SKIP] VS or WDK not available
+)
+
+echo.
+echo ----------------------------------------
+echo    STEP 2: Build Rust Cheat
+echo ----------------------------------------
+echo.
+
+cd cheats\externa-rust-v2
+
+REM Decide if we can embed drivers
+set "EMBED_FLAG="
+if exist "assets\laithdriver.sys" if exist "assets\iqvw64e.sys" (
+    echo [OK] Both drivers found - building with embedded drivers
+    set "EMBED_FLAG=--features embed_drivers"
+) else (
+    echo [INFO] Building without embedded drivers
+)
+
+echo Building Rust project...
+cargo build --release %EMBED_FLAG%
+if %ERRORLEVEL% neq 0 (
     echo [ERROR] Rust build failed!
+    cd ..\..
     pause
     exit /b 1
 )
+echo [OK] Rust build successful
 
-:: Copy result
-if not exist "%~dp0release" mkdir "%~dp0release"
-copy "target\release\externa-rust-v2.exe" "%~dp0release\%OUTPUT_NAME%" >nul
+cd ..\..
 
-:: Also copy drivers if available
-if exist "assets\laithdriver.sys" (
-    if not exist "%~dp0release\driver" mkdir "%~dp0release\driver"
-    copy "assets\laithdriver.sys" "%~dp0release\driver\" >nul
+echo.
+echo ----------------------------------------
+echo    STEP 3: Create Release Package
+echo ----------------------------------------
+echo.
+
+if not exist "release" mkdir "release"
+
+REM Copy main executable
+if exist "cheats\externa-rust-v2\target\release\externa-rust-v2.exe" (
+    copy /Y "cheats\externa-rust-v2\target\release\externa-rust-v2.exe" "release\Externa-CS2.exe" >nul
+    echo [OK] Externa-CS2.exe copied to release folder
 )
-if exist "assets\iqvw64e.sys" (
-    if not exist "%~dp0release\driver" mkdir "%~dp0release\driver"
-    copy "assets\iqvw64e.sys" "%~dp0release\driver\" >nul
+
+REM Copy drivers if they exist and weren't embedded
+if exist "cheats\externa-rust-v2\assets\laithdriver.sys" (
+    copy /Y "cheats\externa-rust-v2\assets\laithdriver.sys" "release\" >nul
+    echo [OK] laithdriver.sys copied
+)
+if exist "cheats\externa-rust-v2\assets\iqvw64e.sys" (
+    copy /Y "cheats\externa-rust-v2\assets\iqvw64e.sys" "release\" >nul
+    echo [OK] iqvw64e.sys copied
 )
 
 echo.
-echo ╔══════════════════════════════════════════════════════════════╗
-echo ║                    BUILD COMPLETE!                           ║
-echo ╠══════════════════════════════════════════════════════════════╣
-echo ║  Output: release\%OUTPUT_NAME%
-echo ║                                                              ║
-echo ║  Usage:                                                      ║
-echo ║  1. Start CS2                                                ║
-echo ║  2. Run %OUTPUT_NAME% as Administrator
-echo ║  3. Press INSERT to toggle ESP                               ║
-echo ╚══════════════════════════════════════════════════════════════╝
+echo ========================================
+echo    BUILD COMPLETE!
+echo ========================================
 echo.
-
-:: Open release folder
-explorer "%~dp0release"
-
+echo Files in release folder:
+dir /b release
+echo.
+echo To run: release\Externa-CS2.exe
+echo.
 pause
-
