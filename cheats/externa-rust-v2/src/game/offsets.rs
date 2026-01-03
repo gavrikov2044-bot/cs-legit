@@ -57,34 +57,44 @@ impl Offsets {
     }
     
     /// Get offsets with pattern scanning (requires PID)
+    /// Uses hybrid approach: scanner for reliable offsets, API for problematic ones
     pub fn fetch_with_scan(pid: u32) -> Self {
-        log::info!("[Offsets] Fetching offsets with pattern scan...");
+        log::info!("[Offsets] Fetching offsets (hybrid mode)...");
         
-        // Method 1: Pattern Scanner (most reliable, works offline)
+        // Start with defaults
+        let mut result = Self::default();
+        
+        // Try API first for dwLocalPlayerController (scanner is unreliable for this)
+        if let Ok(api_offsets) = fetch_from_api() {
+            result.dw_local_player_controller = api_offsets.dw_local_player_controller;
+            log::info!("[Offsets] dwLocalPlayerController from API: 0x{:X}", result.dw_local_player_controller);
+            
+            // Also use API values as fallback
+            result.dw_entity_list = api_offsets.dw_entity_list;
+            result.dw_view_matrix = api_offsets.dw_view_matrix;
+        }
+        
+        // Try pattern scanner for EntityList and ViewMatrix (more reliable)
         match crate::memory::scanner::scan_offsets(pid, "client.dll") {
-            Ok(offsets) => {
-                log::info!("[Offsets] Pattern scan successful!");
-                return offsets;
+            Ok(scanned) => {
+                // Only use scanner results for EntityList and ViewMatrix
+                // LocalPlayerController pattern is known to be unreliable
+                result.dw_entity_list = scanned.dw_entity_list;
+                result.dw_view_matrix = scanned.dw_view_matrix;
+                log::info!("[Offsets] dwEntityList from scanner: 0x{:X}", result.dw_entity_list);
+                log::info!("[Offsets] dwViewMatrix from scanner: 0x{:X}", result.dw_view_matrix);
             }
             Err(e) => {
-                log::warn!("[Offsets] Pattern scan failed: {}", e);
+                log::warn!("[Offsets] Pattern scan failed: {}, using API/fallback", e);
             }
         }
         
-        // Method 2: cs2-dumper API
-        match fetch_from_api() {
-            Ok(offsets) => {
-                log::info!("[Offsets] Loaded from cs2-dumper API");
-                return offsets;
-            }
-            Err(e) => {
-                log::warn!("[Offsets] API fetch failed: {}", e);
-            }
-        }
+        log::info!("[Offsets] Final offsets:");
+        log::info!("[Offsets]   dwEntityList: 0x{:X}", result.dw_entity_list);
+        log::info!("[Offsets]   dwLocalPlayerController: 0x{:X}", result.dw_local_player_controller);
+        log::info!("[Offsets]   dwViewMatrix: 0x{:X}", result.dw_view_matrix);
         
-        // Method 3: Hardcoded fallback
-        log::warn!("[Offsets] Using HARDCODED fallback!");
-        Self::default()
+        result
     }
 }
 

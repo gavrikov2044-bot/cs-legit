@@ -1,0 +1,44 @@
+[2026-01-03 05:29:11] [INFO] ╔════════════════════════════════════════════╗
+[2026-01-03 05:29:11] [INFO] ║       Externa Rust V2.3 - CS2 ESP          ║
+[2026-01-03 05:29:11] [INFO] ║  [INSERT] Toggle ESP | [END] Exit          ║
+[2026-01-03 05:29:11] [INFO] ║  Log file: externa.log                     ║
+[2026-01-03 05:29:11] [INFO] ╚════════════════════════════════════════════╝
+[2026-01-03 05:29:11] [INFO] [Syscall] Direct SSN: 63 (0x3F)
+[2026-01-03 05:29:11] [INFO] Attached to CS2! PID: 15976, Client: 0x7FFBA68B0000
+[2026-01-03 05:29:11] [INFO] [Offsets] Fetching offsets with pattern scan...
+[2026-01-03 05:29:11] [INFO] [Scanner] Starting pattern scan for client.dll...
+[2026-01-03 05:29:11] [INFO] [Scanner] client.dll base: 0x7FFBA68B0000, size: 0x21E7000 (33.9 MB)
+[2026-01-03 05:29:11] [INFO] [Scanner] Read 35549184 bytes from client.dll
+[2026-01-03 05:29:11] [INFO] [Scanner] dwEntityList found 1 occurrence(s)
+[2026-01-03 05:29:11] [INFO] [Scanner] dwEntityList -> 0x1D13CE8 (pattern at 0x67B76A)
+[2026-01-03 05:29:11] [INFO] [Scanner] dwLocalPlayerController found 0 occurrence(s)
+[2026-01-03 05:29:11] [WARN] [Scanner] Pattern dwLocalPlayerController NOT FOUND, trying alternative...
+[2026-01-03 05:29:11] [INFO] [Scanner] dwViewMatrix found 1 occurrence(s)
+[2026-01-03 05:29:11] [INFO] [Scanner] dwViewMatrix -> 0x1E323D0 (pattern at 0x2CFB33)
+[2026-01-03 05:29:11] [INFO] [Scanner] Trying alternative patterns...
+[2026-01-03 05:29:11] [INFO] [Scanner] ALT dwLocalPlayerController -> 0x1B37148
+[2026-01-03 05:29:11] [INFO] [Scanner] ===== SCAN COMPLETE =====
+[2026-01-03 05:29:11] [INFO] [Scanner] dwEntityList: 0x1D13CE8
+[2026-01-03 05:29:11] [INFO] [Scanner] dwLocalPlayerController: 0x1B37148
+[2026-01-03 05:29:11] [INFO] [Scanner] dwViewMatrix: 0x1E323D0
+[2026-01-03 05:29:11] [INFO] [Offsets] Pattern scan successful!
+[2026-01-03 05:29:11] [INFO] Offset verification:
+[2026-01-03 05:29:11] [INFO]   EntityList ptr: 0x45431352800 (valid: true)
+[2026-01-03 05:29:11] [INFO]   LocalCtrl ptr: 0x7FFBA85AFC18 (valid: true)
+[2026-01-03 05:29:11] [INFO] [Overlay] Window class: DesktopHandler492052
+[2026-01-03 05:29:11] [INFO] Input thread started
+[2026-01-03 05:29:11] [INFO] Memory thread started
+[2026-01-03 05:29:11] [INFO] [DEBUG] Entity scan: list_entry=64 ctrl=10 pawn_h=10 pawn=10 health_ok=9 pos_ok=9
+[2026-01-03 05:29:11] [INFO] [Overlay] Screen resolution: 1536x960
+[2026-01-03 05:29:11] [INFO] [DEBUG] Entity scan: list_entry=64 ctrl=10 pawn_h=10 pawn=10 health_ok=9 pos_ok=9
+[2026-01-03 05:29:11] [INFO] [DEBUG] Entity scan: list_entry=64 ctrl=10 pawn_h=10 pawn=10 health_ok=9 pos_ok=9
+[2026-01-03 05:29:11] [INFO] Overlay initialized: 1536x960 | Class: DesktopHandler492052
+[2026-01-03 05:29:16] [INFO] Entities: 10 | LocalTeam: 0
+[2026-01-03 05:29:21] [INFO] Entities: 7 | LocalTeam: 0
+[2026-01-03 05:29:21] [INFO] Overlay FPS: 30
+[2026-01-03 05:29:26] [INFO] Entities: 9 | LocalTeam: 0
+[2026-01-03 05:29:31] [INFO] Entities: 10 | LocalTeam: 0
+[2026-01-03 05:29:31] [INFO] Overlay FPS: 26
+[2026-01-03 05:29:36] [INFO] Entities: 9 | LocalTeam: 0
+[2026-01-03 05:29:41] [INFO] Entities: 7 | LocalTeam: 0
+[2026-01-03 05:29:41] [INFO] Overlay FPS: 37

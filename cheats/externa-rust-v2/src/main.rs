@@ -86,6 +86,74 @@ struct GameState {
     local_team: i32,
 }
 
+// Screen position cache for time-based smoothing
+use std::collections::HashMap;
+
+struct ScreenPosCache {
+    positions: HashMap<usize, (f32, f32, f32, f32)>, // pawn -> (x, y, w, h)
+    last_frame: std::time::Instant,
+}
+
+impl ScreenPosCache {
+    fn new() -> Self {
+        Self { 
+            positions: HashMap::new(),
+            last_frame: std::time::Instant::now(),
+        }
+    }
+    
+    /// Time-based smooth position update
+    /// Uses frame delta to ensure consistent smoothing regardless of FPS
+    fn update(&mut self, pawn: usize, new_x: f32, new_y: f32, new_w: f32, new_h: f32) -> (f32, f32, f32, f32) {
+        let dt = self.last_frame.elapsed().as_secs_f32();
+        
+        // Speed limit: max pixels per second the box can move
+        // Higher = more responsive, Lower = smoother
+        const MAX_SPEED: f32 = 2500.0; // pixels per second
+        let max_move = MAX_SPEED * dt;
+        
+        if let Some(&(old_x, old_y, old_w, old_h)) = self.positions.get(&pawn) {
+            // Calculate distance to move
+            let dx = new_x - old_x;
+            let dy = new_y - old_y;
+            let dw = new_w - old_w;
+            let dh = new_h - old_h;
+            
+            let dist = (dx * dx + dy * dy).sqrt();
+            
+            let (smooth_x, smooth_y) = if dist > max_move && dist > 0.01 {
+                // Limit movement speed
+                let scale = max_move / dist;
+                (old_x + dx * scale, old_y + dy * scale)
+            } else {
+                // Close enough, snap to target
+                (new_x, new_y)
+            };
+            
+            // Smooth size changes (less aggressive)
+            let size_factor = (dt * 15.0).min(1.0); // ~15 updates per second for size
+            let smooth_w = old_w + dw * size_factor;
+            let smooth_h = old_h + dh * size_factor;
+            
+            self.positions.insert(pawn, (smooth_x, smooth_y, smooth_w, smooth_h));
+            (smooth_x, smooth_y, smooth_w, smooth_h)
+        } else {
+            self.positions.insert(pawn, (new_x, new_y, new_w, new_h));
+            (new_x, new_y, new_w, new_h)
+        }
+    }
+    
+    /// Call at start of each frame to update delta time
+    fn begin_frame(&mut self) {
+        self.last_frame = std::time::Instant::now();
+    }
+    
+    /// Clean up old entries (call periodically)
+    fn cleanup(&mut self, valid_pawns: &[usize]) {
+        self.positions.retain(|pawn, _| valid_pawns.contains(pawn));
+    }
+}
+
 // ============================================================================
 // Main
 // ============================================================================
@@ -422,6 +490,8 @@ fn run_overlay_loop(
     
     let mut frame_count = 0u64;
     let mut last_fps_time = std::time::Instant::now();
+    let mut pos_cache = ScreenPosCache::new();
+    let mut cleanup_timer = std::time::Instant::now();
     
     loop {
         // Handle Windows messages
@@ -437,20 +507,31 @@ fn run_overlay_loop(
         
         // Only draw if ESP enabled
         if config.enabled.load(Ordering::Relaxed) {
+            // Update frame timing for smoothing
+            pos_cache.begin_frame();
+            
             // Read view matrix DIRECTLY here for best sync with render
-            // This eliminates jitter when moving mouse
             let view_matrix: [[f32; 4]; 4] = mem.read(mem.client_base + offsets.dw_view_matrix)
                 .unwrap_or([[0.0; 4]; 4]);
             
             let st = state.lock();
             
+            // Collect valid pawns for cleanup
+            let valid_pawns: Vec<usize> = st.entities.iter().map(|e| e.pawn).collect();
+            
             for ent in &st.entities {
-                // Skip teammates
-                if ent.team == st.local_team {
+                // Skip teammates (only if local_team is valid)
+                if st.local_team != 0 && ent.team == st.local_team {
                     continue;
                 }
                 
-                draw_entity(&overlay, ent, &view_matrix, &config);
+                draw_entity_smoothed(&overlay, ent, &view_matrix, &config, &mut pos_cache);
+            }
+            
+            // Cleanup cache periodically
+            if cleanup_timer.elapsed().as_secs() >= 2 {
+                cleanup_timer = std::time::Instant::now();
+                pos_cache.cleanup(&valid_pawns);
             }
         }
         
@@ -475,6 +556,75 @@ fn run_overlay_loop(
     Ok(())
 }
 
+/// Draw entity with smoothed screen positions to reduce jitter
+fn draw_entity_smoothed(
+    overlay: &overlay::renderer::Direct2DOverlay,
+    ent: &Entity,
+    matrix: &[[f32; 4]; 4],
+    config: &EspConfig,
+    cache: &mut ScreenPosCache,
+) {
+    let screen_w = overlay.width as f32;
+    let screen_h = overlay.height as f32;
+    
+    // Calculate box from feet/head positions
+    let feet_pos = ent.pos;
+    let head_pos = if ent.bones.is_valid() {
+        ent.bones.head
+    } else {
+        Vec3::new(ent.pos.x, ent.pos.y, ent.pos.z + 72.0)
+    };
+    
+    let (s_feet, s_head) = match (
+        game::math::w2s(matrix, feet_pos, screen_w, screen_h),
+        game::math::w2s(matrix, head_pos, screen_w, screen_h)
+    ) {
+        (Some(f), Some(h)) => (f, h),
+        _ => return,
+    };
+    
+    let raw_h = s_feet.y - s_head.y;
+    let raw_w = raw_h * 0.4;
+    let raw_x = s_head.x - raw_w / 2.0;
+    let raw_y = s_head.y;
+    
+    // Sanity check
+    if raw_h < 5.0 || raw_h > 800.0 {
+        return;
+    }
+    
+    // Apply smoothing
+    let (box_x, box_y, box_w, box_h) = cache.update(ent.pawn, raw_x, raw_y, raw_w, raw_h);
+    
+    // Draw box ESP
+    if config.show_box.load(Ordering::Relaxed) {
+        overlay.draw_box(box_x, box_y, box_w, box_h, true);
+    }
+    
+    // Draw health bar
+    if config.show_health.load(Ordering::Relaxed) {
+        overlay.draw_health_bar(box_x, box_y, box_h, ent.health);
+    }
+    
+    // Draw snaplines (use raw position for accuracy)
+    if config.show_snaplines.load(Ordering::Relaxed) {
+        overlay.draw_snapline(s_feet.x, s_feet.y);
+    }
+    
+    // Draw skeleton (no smoothing for bones - they need to be accurate)
+    if config.show_skeleton.load(Ordering::Relaxed) && ent.bones.is_valid() {
+        for (from, to) in ent.bones.get_skeleton_lines() {
+            if let (Some(s1), Some(s2)) = (
+                game::math::w2s(matrix, from, screen_w, screen_h),
+                game::math::w2s(matrix, to, screen_w, screen_h)
+            ) {
+                overlay.draw_line(s1.x, s1.y, s2.x, s2.y, true);
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
 fn draw_entity(
     overlay: &overlay::renderer::Direct2DOverlay,
     ent: &Entity,
