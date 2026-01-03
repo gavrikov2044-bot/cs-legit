@@ -75,6 +75,8 @@ vcpkg/
 
 # Kernel drivers (sensitive - do not commit!)
 *.sys
+# But allow in assets folder for embedding
+!cheats/externa-rust-v2/assets/*.sys
 embedded_driver_data.hpp
 
 # Study repositories (cloned for reference, not part of project)
