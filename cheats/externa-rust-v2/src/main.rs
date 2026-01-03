@@ -594,13 +594,17 @@ fn run_overlay_loop(
             }
         }
         
+        if frame_count < 3 {
+            info!("[Render] Frame {} - calling end_scene", frame_count);
+        }
+        
         // End drawing
         if !overlay.end_scene() {
             error!("D2D device lost, attempting recovery...");
         }
         
         if frame_count < 3 {
-            info!("[Render] Frame {} completed", frame_count);
+            info!("[Render] Frame {} completed successfully", frame_count);
         }
         
         // FPS counter

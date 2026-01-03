@@ -513,7 +513,7 @@ impl KernelMemory {
     
     /// Allocate kernel memory by calling ExAllocatePoolWithTag
     /// This is complex - we need to set up a call to kernel function
-    fn allocate_pool(&self, size: usize) -> Result<u64, String> {
+    fn allocate_pool(&self, _size: usize) -> Result<u64, String> {
         // Find ExAllocatePoolWithTag or ExAllocatePool2 (Win10 2004+)
         let alloc_func = self.get_export("ExAllocatePoolWithTag")
             .or_else(|| self.get_export("ExAllocatePool2"))
@@ -729,8 +729,8 @@ impl KDMapper {
             log::info!("[KDMapper] Entry RVA: 0x{:X}", entry_rva);
             log::info!("[KDMapper] Preferred base: 0x{:X}", image_base);
             
-            // Get kernel memory interface
-            let kernel = self.kernel.as_ref().ok_or("Kernel not initialized")?;
+            // Get kernel memory interface (unused for now, kept for future full manual mapping)
+            let _kernel = self.kernel.as_ref().ok_or("Kernel not initialized")?;
             
             // For now, we'll use a simplified approach:
             // Find a large enough pool allocation we can hijack
