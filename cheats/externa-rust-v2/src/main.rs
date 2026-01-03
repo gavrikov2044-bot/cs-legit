@@ -93,7 +93,7 @@ fn main() -> Result<()> {
                 // Read Local Player
                 let mut local_team = 0;
                 let local_ctrl: usize = mem_clone.read(mem_clone.client_base + offsets_clone.dw_local_player_controller).unwrap_or(0);
-                const STRIDE: usize = 0x78; // 120 bytes
+                const STRIDE: usize = 112; // 0x70 - from working C++ code
                 
                 if local_ctrl != 0 && local_ctrl < 0x7FF000000000 {
                      let pawn_h: u32 = mem_clone.read(local_ctrl + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
@@ -126,8 +126,8 @@ fn main() -> Result<()> {
                 let mut debug_stats = (0u32, 0u32, 0u32, 0u32, 0u32); // ctrl_found, pawn_h_ok, pawn_ok, health_ok, added
                 
                 if ent_list != 0 {
-                    // Stride = 0x78 (120 bytes) for CEntityIdentity
-                    const STRIDE: usize = 0x78;
+                    // Stride = 112 bytes (0x70) for CEntityIdentity - from working C++ code
+                    const STRIDE: usize = 112;
                     
                     // Iterate through player slots (1-64, skip 0 which is world)
                     for i in 1..=64 {
