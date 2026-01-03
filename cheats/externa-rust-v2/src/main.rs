@@ -92,11 +92,47 @@ struct GameState {
 // ============================================================================
 
 fn main() -> Result<()> {
+    // Set up panic handler to log crashes
+    std::panic::set_hook(Box::new(|panic_info| {
+        let msg = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+        
+        let location = panic_info.location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "unknown".to_string());
+        
+        eprintln!("\n╔════════════════════════════════════════════╗");
+        eprintln!("║              CRASH DETECTED!               ║");
+        eprintln!("╠════════════════════════════════════════════╣");
+        eprintln!("║ Location: {}", location);
+        eprintln!("║ Error: {}", msg);
+        eprintln!("╚════════════════════════════════════════════╝");
+        
+        // Also write to log file
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("externa.log") 
+        {
+            use std::io::Write;
+            let _ = writeln!(file, "\n[CRASH] {} at {}", msg, location);
+        }
+        
+        // Wait for user to see the message
+        eprintln!("\nPress Enter to exit...");
+        let _ = std::io::stdin().read_line(&mut String::new());
+    }));
+    
     // Initialize logging (console + externa.log file)
     init_logging();
     
     info!("╔════════════════════════════════════════════╗");
-    info!("║       Externa Rust V2.4 - CS2 ESP          ║");
+    info!("║      Externa Rust V2.4.1 - CS2 ESP         ║");
     info!("║  [INSERT] Toggle ESP | [END] Exit          ║");
     info!("║  Log file: externa.log                     ║");
     info!("╚════════════════════════════════════════════╝");
