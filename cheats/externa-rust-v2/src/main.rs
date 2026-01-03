@@ -217,7 +217,7 @@ fn spawn_memory_thread(
 }
 
 fn read_local_team(mem: &memory::Memory, offsets: &Offsets) -> i32 {
-    const STRIDE: usize = 120; // 0x78
+    const STRIDE: usize = 112; // 0x70 - original working value
     
     let local_ctrl: usize = mem.read(mem.client_base + offsets.dw_local_player_controller).unwrap_or(0);
     if local_ctrl == 0 || local_ctrl > 0x7FF000000000 {
@@ -254,7 +254,7 @@ fn read_local_team(mem: &memory::Memory, offsets: &Offsets) -> i32 {
 static DEBUG_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 fn read_entities(mem: &memory::Memory, offsets: &Offsets, entities: &mut Vec<Entity>) {
-    const STRIDE: usize = 120; // 0x78 - CEntityIdentity size
+    const STRIDE: usize = 112; // 0x70 - original working value
     
     let ent_list: usize = mem.read(mem.client_base + offsets.dw_entity_list).unwrap_or(0);
     if ent_list == 0 {

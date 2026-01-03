@@ -146,23 +146,23 @@ fn fetch_from_api() -> anyhow::Result<Offsets> {
 // ============================================================================
 
 pub mod netvars {
-    // C_BaseEntity
-    pub const M_I_HEALTH: usize = 0x344;           // m_iHealth
-    pub const M_I_TEAM_NUM: usize = 0x3E3;         // m_iTeamNum
-    pub const M_P_GAME_SCENE_NODE: usize = 0x328;  // m_pGameSceneNode
+    // C_BaseEntity - ORIGINAL WORKING VALUES
+    pub const M_I_HEALTH: usize = 0x34C;           // m_iHealth
+    pub const M_I_TEAM_NUM: usize = 0x3EB;         // m_iTeamNum
+    pub const M_P_GAME_SCENE_NODE: usize = 0x330;  // m_pGameSceneNode
     
     // C_BasePlayerPawn  
-    pub const M_V_OLD_ORIGIN: usize = 0x1324;      // m_vOldOrigin
+    pub const M_V_OLD_ORIGIN: usize = 0x15A0;      // m_vOldOrigin
     
     // CCSPlayerController
-    pub const M_H_PLAYER_PAWN: usize = 0x80C;      // m_hPlayerPawn
+    pub const M_H_PLAYER_PAWN: usize = 0x8FC;      // m_hPlayerPawn
     
     // CGameSceneNode
     #[allow(dead_code)]
     pub const M_VEC_ABS_ORIGIN: usize = 0xD0;      // m_vecAbsOrigin
     
     // CSkeletonInstance / Bones
-    pub const M_MODEL_STATE: usize = 0x170;        // m_modelState
+    pub const M_MODEL_STATE: usize = 0x190;        // m_modelState (original)
     pub const M_BONE_ARRAY: usize = 0x80;          // Bone array offset
     
     // Bone indices (CS2)
