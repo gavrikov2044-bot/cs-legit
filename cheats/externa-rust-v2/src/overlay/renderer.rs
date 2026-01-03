@@ -22,7 +22,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::Graphics::Dwm::DwmFlush;
+// DwmFlush disabled - was causing crashes
+// use windows::Win32::Graphics::Dwm::DwmFlush;
 
 pub struct Direct2DOverlay {
     #[allow(dead_code)]
