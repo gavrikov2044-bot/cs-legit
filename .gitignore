@@ -77,3 +77,8 @@ vcpkg/
 *.sys
 embedded_driver_data.hpp
 
+# Study repositories (cloned for reference, not part of project)
+DragonBurn-study/
+laith-dragonburn/
+laith-km-driver/
+
