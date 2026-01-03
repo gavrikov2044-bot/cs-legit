@@ -250,6 +250,9 @@ fn read_local_team(mem: &memory::Memory, offsets: &Offsets) -> i32 {
     mem.read(pawn + netvars::M_I_TEAM_NUM).unwrap_or(0)
 }
 
+// Debug counter for first few iterations
+static DEBUG_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 fn read_entities(mem: &memory::Memory, offsets: &Offsets, entities: &mut Vec<Entity>) {
     const STRIDE: usize = 120; // 0x78 - CEntityIdentity size
     
@@ -258,18 +261,27 @@ fn read_entities(mem: &memory::Memory, offsets: &Offsets, entities: &mut Vec<Ent
         return;
     }
     
+    // Debug logging (first 3 iterations only)
+    let debug_count = DEBUG_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let should_debug = debug_count < 3;
+    
+    let mut stats = (0u32, 0u32, 0u32, 0u32, 0u32, 0u32); // list_entry, controller, pawn_h, pawn, health, added
+    
     // Iterate player slots (1-64)
     for i in 1..=64usize {
         let chunk_idx = (i & 0x7FFF) >> 9;
         let list_entry: usize = mem.read(ent_list + 8 * chunk_idx + 0x10).unwrap_or(0);
         if list_entry == 0 { continue; }
+        stats.0 += 1;
         
         let entry_idx = i & 0x1FF;
         let controller: usize = mem.read(list_entry + entry_idx * STRIDE).unwrap_or(0);
         if controller == 0 || controller > 0x7FF000000000 { continue; }
+        stats.1 += 1;
         
         let pawn_h: u32 = mem.read(controller + netvars::M_H_PLAYER_PAWN).unwrap_or(0);
         if pawn_h == 0 || pawn_h == 0xFFFFFFFF { continue; }
+        stats.2 += 1;
         
         // Get pawn from entity list
         let pawn_chunk_idx = (pawn_h as usize & 0x7FFF) >> 9;
@@ -279,16 +291,19 @@ fn read_entities(mem: &memory::Memory, offsets: &Offsets, entities: &mut Vec<Ent
         
         let pawn: usize = mem.read(list_entry2 + pawn_entry_idx * STRIDE).unwrap_or(0);
         if pawn == 0 || pawn > 0x7FF000000000 { continue; }
+        stats.3 += 1;
         
         // Health check
         let health: i32 = mem.read(pawn + netvars::M_I_HEALTH).unwrap_or(0);
         if health <= 0 || health > 100 { continue; }
+        stats.4 += 1;
         
         let team: i32 = mem.read(pawn + netvars::M_I_TEAM_NUM).unwrap_or(0);
         
         // Position
         let pos: Vec3 = mem.read(pawn + netvars::M_V_OLD_ORIGIN).unwrap_or(Vec3::ZERO);
         if pos == Vec3::ZERO { continue; }
+        stats.5 += 1;
         
         // Read bones
         let bones = read_bones(mem, pawn);
@@ -301,6 +316,12 @@ fn read_entities(mem: &memory::Memory, offsets: &Offsets, entities: &mut Vec<Ent
             team,
             bones,
         });
+    }
+    
+    // Debug logging
+    if should_debug {
+        info!("[DEBUG] Entity scan: list_entry={} ctrl={} pawn_h={} pawn={} health_ok={} pos_ok={}",
+              stats.0, stats.1, stats.2, stats.3, stats.4, stats.5);
     }
 }
 
