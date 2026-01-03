@@ -180,9 +180,13 @@ fn main() -> Result<()> {
     spawn_input_thread(config.clone());
 
     // Main overlay loop (pass mem and offsets for direct view matrix reading)
-    run_overlay_loop(state, config, mem, offsets)?;
+    match run_overlay_loop(state, config, mem, offsets) {
+        Ok(_) => info!("Overlay loop finished normally"),
+        Err(e) => error!("Overlay loop error: {:?}", e),
+    }
 
-    info!("Exiting...");
+    info!("Exiting... Press Enter to close.");
+    let _ = std::io::stdin().read_line(&mut String::new());
     Ok(())
 }
 
@@ -496,14 +500,22 @@ fn run_overlay_loop(
     let mut frame_count = 0u64;
     let mut last_fps_time = std::time::Instant::now();
     
+    info!("[Render] Starting render loop...");
+    
     // No artificial delay - render as fast as possible!
     // D2D Present will sync with display naturally
     
     loop {
         let _frame_start = std::time::Instant::now();
         
+        // Log first few frames for debugging
+        if frame_count < 3 {
+            info!("[Render] Frame {} starting", frame_count);
+        }
+        
         // Handle Windows messages
         if !overlay.handle_message() {
+            info!("[Render] WM_QUIT received, exiting loop");
             break;
         }
         
@@ -511,6 +523,10 @@ fn run_overlay_loop(
         if !overlay.begin_scene() {
             warn!("Failed to begin scene");
             continue;
+        }
+        
+        if frame_count < 3 {
+            info!("[Render] Frame {} - scene started", frame_count);
         }
         
         // Only draw if ESP enabled
@@ -563,6 +579,10 @@ fn run_overlay_loop(
         // End drawing
         if !overlay.end_scene() {
             error!("D2D device lost, attempting recovery...");
+        }
+        
+        if frame_count < 3 {
+            info!("[Render] Frame {} completed", frame_count);
         }
         
         // FPS counter

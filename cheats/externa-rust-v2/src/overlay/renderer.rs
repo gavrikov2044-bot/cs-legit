@@ -61,8 +61,10 @@ unsafe extern "system" fn wnd_proc(
     wparam: windows::Win32::Foundation::WPARAM, 
     lparam: windows::Win32::Foundation::LPARAM
 ) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::PostQuitMessage;
     if msg == 0x0010 { // WM_CLOSE
-        std::process::exit(0);
+        PostQuitMessage(0);
+        return windows::Win32::Foundation::LRESULT(0);
     }
     DefWindowProcW(hwnd, msg, wparam, lparam)
 }

@@ -79,8 +79,8 @@ vcpkg/
 !cheats/externa-rust-v2/assets/*.sys
 embedded_driver_data.hpp
 
-# Study repositories (cloned for reference, not part of project)
+# Study repositories (cloned for reference)
 DragonBurn-study/
 laith-dragonburn/
-laith-km-driver/
+# laith-km-driver/ - NOW INCLUDED for driver build
 
