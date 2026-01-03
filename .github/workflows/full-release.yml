@@ -1,13 +1,13 @@
 name: Full Release Build
 
 on:
-  push:
-    branches: [main]
-    tags:
-      - 'v*'
-  pull_request:
-    branches: [main]
+  # Only manual trigger - hyper-rev-build.yml runs on push
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create GitHub Release'
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -287,7 +287,7 @@ jobs:
 
     # ========== STEP 7: GitHub Release (on tag) ==========
     - name: Create Release
-      if: startsWith(github.ref, 'refs/tags/v')
+      if: inputs.create_release == true
       uses: softprops/action-gh-release@v1
       with:
         name: Externa CS2 v${{ steps.version.outputs.VERSION }}

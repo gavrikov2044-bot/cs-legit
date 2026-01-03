@@ -214,6 +214,7 @@ fn attach_to_cs2() -> Result<memory::Memory> {
                     _pid: pid,
                     client_base,
                     driver: Some(Arc::new(parking_lot::Mutex::new(driver))),
+                    hyperv: None,
                 });
             }
         }
@@ -231,6 +232,7 @@ fn attach_to_cs2() -> Result<memory::Memory> {
         _pid: pid,
         client_base,
         driver: None,
+        hyperv: None,
     })
 }
 

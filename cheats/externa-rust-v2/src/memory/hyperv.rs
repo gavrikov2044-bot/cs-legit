@@ -8,7 +8,6 @@
 //!
 //! Requires hyper-reV to be loaded (uefi-boot.efi deployed)
 
-use std::ffi::c_void;
 use std::mem;
 use std::arch::asm;
 
@@ -183,8 +182,8 @@ impl HyperVReader {
                 result = out(reg) result,
                 success = out(reg) success,
                 out("rcx") _,
-                out("r8") _,
-                out("r9") _,
+                lateout("r8") _,
+                lateout("r9") _,
             );
             
             if success == 0 {
