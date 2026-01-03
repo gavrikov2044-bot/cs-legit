@@ -442,20 +442,50 @@ fn run_overlay_loop(
         
         // Only draw if ESP enabled
         if config.enabled.load(Ordering::Relaxed) {
-            // Read view matrix in render loop for perfect sync (no jitter)
+            // Read EVERYTHING at render time for perfect sync
             let view_matrix: [[f32; 4]; 4] = mem.read(mem.client_base + offsets.dw_view_matrix)
                 .unwrap_or([[0.0; 4]; 4]);
             
-            let st = state.lock();
+            // Get local team and entity list from cached state (these change rarely)
+            let (local_team, entity_pawns): (i32, Vec<(usize, i32)>) = {
+                let st = state.lock();
+                let pawns: Vec<(usize, i32)> = st.entities.iter()
+                    .filter(|e| e.health > 0)
+                    .map(|e| (e.pawn, e.team))
+                    .collect();
+                (st.local_team, pawns)
+            };
             
-            for ent in &st.entities {
+            // For each entity, read FRESH bone positions at render time
+            for (pawn, team) in entity_pawns {
                 // Skip teammates
-                if st.local_team != 0 && ent.team == st.local_team {
+                if local_team != 0 && team == local_team {
                     continue;
                 }
                 
-                // Direct draw - no smoothing, perfect lock
-                draw_entity(&overlay, ent, &view_matrix, &config);
+                // Read GameSceneNode FRESH
+                let game_scene_node: usize = mem.read(pawn + netvars::M_P_GAME_SCENE_NODE).unwrap_or(0);
+                if game_scene_node == 0 { continue; }
+                
+                // Read position FRESH
+                let pos: Vec3 = mem.read(game_scene_node + 0xD0).unwrap_or(Vec3::ZERO);
+                if pos == Vec3::ZERO { continue; }
+                
+                // Read head bone FRESH for accurate head position
+                let model_state = game_scene_node + netvars::M_MODEL_STATE;
+                let bone_array: usize = mem.read(model_state + netvars::M_BONE_ARRAY).unwrap_or(0);
+                
+                let head_pos = if bone_array != 0 {
+                    mem.read::<Vec3>(bone_array + netvars::BONE_HEAD * 32).unwrap_or(pos + Vec3::new(0.0, 0.0, 72.0))
+                } else {
+                    pos + Vec3::new(0.0, 0.0, 72.0)
+                };
+                
+                // Read health FRESH
+                let health: i32 = mem.read(pawn + netvars::M_I_HEALTH).unwrap_or(100);
+                
+                // Draw immediately with fresh data
+                draw_entity_fresh(&overlay, pos, head_pos, health, &view_matrix, &config);
             }
         }
         
@@ -482,7 +512,54 @@ fn run_overlay_loop(
     Ok(())
 }
 
-/// Draw entity ESP (box, skeleton, health, snaplines)
+/// Draw entity with FRESH data (read at render time)
+fn draw_entity_fresh(
+    overlay: &overlay::renderer::Direct2DOverlay,
+    feet_pos: Vec3,
+    head_pos: Vec3,
+    health: i32,
+    matrix: &[[f32; 4]; 4],
+    config: &EspConfig,
+) {
+    let screen_w = overlay.width as f32;
+    let screen_h = overlay.height as f32;
+    
+    let (s_feet, s_head) = match (
+        game::math::w2s(matrix, feet_pos, screen_w, screen_h),
+        game::math::w2s(matrix, head_pos, screen_w, screen_h)
+    ) {
+        (Some(f), Some(h)) => (f, h),
+        _ => return,
+    };
+    
+    let box_h = s_feet.y - s_head.y;
+    let box_w = box_h * 0.4;
+    let box_x = s_head.x - box_w / 2.0;
+    let box_y = s_head.y;
+    
+    // Sanity check
+    if box_h < 5.0 || box_h > 800.0 {
+        return;
+    }
+    
+    // Draw box ESP
+    if config.show_box.load(Ordering::Relaxed) {
+        overlay.draw_box(box_x, box_y, box_w, box_h, true);
+    }
+    
+    // Draw health bar
+    if config.show_health.load(Ordering::Relaxed) {
+        overlay.draw_health_bar(box_x, box_y, box_h, health);
+    }
+    
+    // Draw snaplines
+    if config.show_snaplines.load(Ordering::Relaxed) {
+        overlay.draw_snapline(s_feet.x, s_feet.y);
+    }
+}
+
+/// Draw entity ESP (box, skeleton, health, snaplines) - uses cached Entity
+#[allow(dead_code)]
 fn draw_entity(
     overlay: &overlay::renderer::Direct2DOverlay,
     ent: &Entity,
