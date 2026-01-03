@@ -3,6 +3,7 @@ use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 use windows::core::PCSTR;
 use std::arch::global_asm;
 
+#[allow(static_mut_refs)]
 static mut SSN_NT_READ: u32 = 0;
 
 pub fn init() {

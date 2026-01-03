@@ -1,5 +1,5 @@
 use anyhow::Result;
-use windows::core::{HSTRING, Interface}; // Removed Result to avoid conflict
+use windows::core::HSTRING; // Removed Result to avoid conflict
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct2D::{ID2D1Factory, ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
     D2D1CreateFactory, D2D1_FACTORY_TYPE_SINGLE_THREADED,
@@ -8,21 +8,21 @@ use windows::Win32::Graphics::Direct2D::{ID2D1Factory, ID2D1HwndRenderTarget, ID
     D2D1_FACTORY_OPTIONS,
 };
 // ID2D1RenderTarget_Impl is gated behind Foundation_Numerics, which we added to Cargo.toml
-use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget_Impl; 
+// use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget_Impl; // Not needed 
 
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Direct2D::Common::{D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT, D2D1_COLOR_F, D2D_SIZE_U}; // Added D2D_SIZE_U
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, RegisterClassExW, DefWindowProcW, ShowWindow,
     WS_EX_TOPMOST, WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_EX_NOACTIVATE, WS_POPUP, WS_VISIBLE,
-    WNDCLASSEXW, CS_HREDRAW, CS_VREDRAW, SW_SHOWDEFAULT, SetLayeredWindowAttributes, LWA_ALPHA, LWA_COLORKEY,
+    WNDCLASSEXW, CS_HREDRAW, CS_VREDRAW, SW_SHOWDEFAULT, SetLayeredWindowAttributes, LWA_COLORKEY,
     PeekMessageW, TranslateMessage, DispatchMessageW, PM_REMOVE, MSG,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 
 pub struct Direct2DOverlay {
-    pub hwnd: HWND,
-    factory: ID2D1Factory,
+    pub _hwnd: HWND,
+    _factory: ID2D1Factory,
     target: ID2D1HwndRenderTarget,
     brush_enemy: ID2D1SolidColorBrush,
     brush_team: ID2D1SolidColorBrush,
@@ -67,13 +67,13 @@ impl Direct2DOverlay {
 
             // Use LWA_COLORKEY to make black (0,0,0) pixels transparent
             SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), 0, LWA_COLORKEY)?;
-            ShowWindow(hwnd, SW_SHOWDEFAULT);
+            let _ = ShowWindow(hwnd, SW_SHOWDEFAULT);
 
             // Init D2D
             let factory_options = D2D1_FACTORY_OPTIONS { debugLevel: D2D1_DEBUG_LEVEL_NONE };
             let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, Some(&factory_options))?;
             
-            let rc = RECT { left: 0, top: 0, right: width as i32, bottom: height as i32 };
+            let _rc = RECT { left: 0, top: 0, right: width as i32, bottom: height as i32 };
             let render_props = D2D1_RENDER_TARGET_PROPERTIES {
                 pixelFormat: D2D1_PIXEL_FORMAT {
                     format: DXGI_FORMAT_B8G8R8A8_UNORM,

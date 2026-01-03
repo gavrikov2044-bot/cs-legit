@@ -9,6 +9,8 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 
+// Pattern struct for signature scanning (not used with hardcoded offsets)
+#[allow(dead_code)]
 pub struct Pattern {
     bytes: Vec<Option<u8>>,
     name: &'static str,
@@ -16,6 +18,7 @@ pub struct Pattern {
     extra: usize,  // Extra to add (instruction length, usually 7)
 }
 
+#[allow(dead_code)]
 impl Pattern {
     pub fn new(name: &'static str, pattern: &str, offset: usize, extra: usize) -> Self {
         let bytes = pattern.split_whitespace()
@@ -25,6 +28,8 @@ impl Pattern {
     }
 }
 
+// Scan module for patterns (disabled - using hardcoded offsets)
+#[allow(dead_code)]
 pub fn scan_module(pid: u32, module_name: &str, patterns: &[Pattern]) -> Result<Vec<usize>> {
     let mut results = vec![0; patterns.len()];
     
@@ -79,6 +84,7 @@ pub fn scan_module(pid: u32, module_name: &str, patterns: &[Pattern]) -> Result<
     Ok(results)
 }
 
+#[allow(dead_code)]
 fn find_pattern(data: &[u8], pattern: &[Option<u8>]) -> Option<usize> {
     for i in 0..data.len().saturating_sub(pattern.len()) {
         if pattern.iter().enumerate().all(|(j, &b)| b.is_none() || b == Some(data[i + j])) {

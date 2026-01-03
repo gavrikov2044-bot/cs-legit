@@ -191,7 +191,7 @@ fn main() -> Result<()> {
                         let bones = [Vec3::ZERO; 30];
 
                         st.entities.push(game::entity::Entity {
-                            pawn, controller, pos, health, team, bones
+                            _pawn: pawn, _controller: controller, pos, _health: health, team, _bones: bones
                         });
                         debug_stats.4 += 1;
                     }

@@ -16,6 +16,6 @@ pub mod netvars {
     pub const M_P_GAME_SCENE_NODE: usize = 0x330;
     pub const M_VEC_ABS_ORIGIN: usize = 0xD0;
     pub const M_H_PLAYER_PAWN: usize = 0x8FC;
-    pub const M_MODEL_STATE: usize = 0x190;
-    pub const M_BONE_ARRAY: usize = 0x80;
+    // pub const M_MODEL_STATE: usize = 0x190; // For bones (not used yet)
+    // pub const M_BONE_ARRAY: usize = 0x80;
 }
