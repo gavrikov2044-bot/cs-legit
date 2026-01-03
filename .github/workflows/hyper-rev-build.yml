@@ -28,89 +28,64 @@ jobs:
 
     - name: Install NASM
       run: |
-        # Try multiple sources for NASM
-        $installed = $false
-        
-        # Method 1: Chocolatey (most reliable)
-        try {
-          choco install nasm -y --no-progress
-          $nasmPath = "C:\Program Files\NASM"
-          if (Test-Path "$nasmPath\nasm.exe") {
-            echo "NASM_PREFIX=$nasmPath\" >> $env:GITHUB_ENV
-            echo "$nasmPath" >> $env:GITHUB_PATH
-            Write-Host "NASM installed via Chocolatey"
-            $installed = $true
-          }
-        } catch {
-          Write-Host "Chocolatey failed: $_"
-        }
-        
-        # Method 2: Direct download from GitHub mirror
-        if (-not $installed) {
-          try {
-            $url = "https://github.com/netwide-assembler/nasm/releases/download/nasm-2.16.01/nasm-2.16.01-win64.zip"
-            Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\nasm.zip" -UseBasicParsing -TimeoutSec 120
-            Expand-Archive -Path "$env:TEMP\nasm.zip" -DestinationPath "C:\" -Force
-            Rename-Item "C:\nasm-2.16.01" "C:\NASM" -ErrorAction SilentlyContinue
-            echo "NASM_PREFIX=C:\NASM\" >> $env:GITHUB_ENV
-            echo "C:\NASM" >> $env:GITHUB_PATH
-            Write-Host "NASM installed from GitHub"
-            $installed = $true
-          } catch {
-            Write-Host "GitHub download failed: $_"
-          }
-        }
-        
-        if ($installed) {
-          nasm -v
-        } else {
-          Write-Host "WARNING: NASM not installed"
-        }
+        choco install nasm -y --no-progress
+        $nasmPath = "C:\Program Files\NASM"
+        echo "NASM_PREFIX=$nasmPath\" >> $env:GITHUB_ENV
+        echo "$nasmPath" >> $env:GITHUB_PATH
+        nasm -v
       shell: pwsh
 
     - name: Clone hyper-reV with submodules
       run: |
-        Write-Host "Cloning hyper-reV from official GitHub..."
-        git clone --recurse-submodules https://github.com/noahware/hyper-reV.git hyper-rev-build
-        
+        Write-Host "=== Cloning hyper-reV ==="
+        git clone https://github.com/noahware/hyper-reV.git hyper-rev-build
         cd hyper-rev-build
         
-        if (-not (Test-Path "uefi-boot\ext\edk2\src")) {
-          Write-Host "Cloning EDK2 manually..."
-          mkdir -p uefi-boot\ext\edk2 -Force
+        Write-Host "=== Initializing submodules ==="
+        git submodule update --init --recursive
+        
+        # Verify submodules
+        Write-Host "=== Checking submodules ==="
+        
+        if (-not (Test-Path "uefi-boot\ext\edk2\src\build\EDK-II.sln")) {
+          Write-Host "EDK2 submodule missing, cloning manually..."
+          New-Item -ItemType Directory -Force -Path "uefi-boot\ext\edk2\src" | Out-Null
           git clone https://github.com/ionescu007/edk2.git uefi-boot/ext/edk2/src
         }
         
-        if (-not (Test-Path "uefi-boot\ext\openssl")) {
-          Write-Host "Cloning OpenSSL manually..."
-          git clone --branch OpenSSL_1_1_0-stable https://github.com/openssl/openssl.git uefi-boot/ext/openssl
+        if (-not (Test-Path "uefi-boot\ext\openssl\Configure")) {
+          Write-Host "OpenSSL submodule missing, cloning manually..."
+          git clone --branch OpenSSL_1_1_0-stable --depth 1 https://github.com/openssl/openssl.git uefi-boot/ext/openssl
         }
         
-        Write-Host "Repository structure:"
+        Write-Host "=== Repository structure ==="
         Get-ChildItem
+        Get-ChildItem uefi-boot\ext -ErrorAction SilentlyContinue
+      shell: pwsh
 
-    - name: Cache EDK2
+    - name: Cache EDK2 Build
       id: cache-edk2
       uses: actions/cache@v4
       with:
-        path: hyper-rev-build/uefi-boot/ext/edk2/build/x64
-        key: edk2-v3-${{ runner.os }}
+        path: hyper-rev-build/uefi-boot/ext/edk2/src/build/x64
+        key: edk2-v4-${{ runner.os }}
 
     - name: Build EDK2 Libraries
       if: steps.cache-edk2.outputs.cache-hit != 'true'
       run: |
-        $edkPath = "hyper-rev-build\uefi-boot\ext\edk2\build"
-        if (Test-Path "$edkPath\EDK-II.sln") {
-          cd $edkPath
-          msbuild EDK-II.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
-        } elseif (Test-Path "hyper-rev-build\uefi-boot\ext\edk2\src\build\EDK-II.sln") {
+        $edkSln = "hyper-rev-build\uefi-boot\ext\edk2\src\build\EDK-II.sln"
+        
+        if (Test-Path $edkSln) {
+          Write-Host "Building EDK-II.sln..."
           cd "hyper-rev-build\uefi-boot\ext\edk2\src\build"
           msbuild EDK-II.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
         } else {
-          Write-Host "EDK-II.sln not found"
-          Get-ChildItem -Path hyper-rev-build -Recurse -Filter "*.sln" | Select-Object -First 10
+          Write-Host "ERROR: EDK-II.sln not found at $edkSln"
+          Write-Host "Searching for solution files..."
+          Get-ChildItem -Path hyper-rev-build -Recurse -Filter "*.sln" | Select-Object -First 20
+          exit 1
         }
-      continue-on-error: true
+      shell: pwsh
 
     - name: Upload prepared source
       uses: actions/upload-artifact@v4
@@ -153,50 +128,104 @@ jobs:
         $configFile = "hyper-rev-build\hyperv-attachment\src\arch_config.h"
         
         if (Test-Path $configFile) {
+          Write-Host "Configuring for Intel..."
           $content = Get-Content $configFile -Raw
           $content = $content -replace '//\s*#define\s+_INTELMACHINE', '#define _INTELMACHINE'
           $content = $content -replace '#define\s+_AMDMACHINE', '//#define _AMDMACHINE'
           Set-Content $configFile $content
-          Write-Host "Configured for Intel"
           Get-Content $configFile
         } else {
           Write-Host "Creating arch_config.h for Intel..."
           New-Item -Path (Split-Path $configFile) -ItemType Directory -Force
-          Set-Content $configFile "#pragma once`n#define _INTELMACHINE`n//#define _AMDMACHINE"
+          @"
+#pragma once
+#define _INTELMACHINE
+//#define _AMDMACHINE
+"@ | Set-Content $configFile
         }
+      shell: pwsh
 
-    - name: Build hyper-reV (all components)
+    - name: Build hyper-reV
       run: |
         cd hyper-rev-build
         
-        # Build via main solution file (sets SolutionDir correctly)
+        Write-Host "=== Building hyper-reV.sln ==="
         if (Test-Path "hyper-reV.sln") {
-          Write-Host "Building hyper-reV.sln..."
-          msbuild hyper-reV.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+          msbuild hyper-reV.sln /p:Configuration=Release /p:Platform=x64 /m /v:normal
         } else {
-          Write-Host "hyper-reV.sln not found!"
+          Write-Host "ERROR: hyper-reV.sln not found!"
           Get-ChildItem
+          exit 1
         }
+      shell: pwsh
       continue-on-error: true
 
-    - name: Prepare Intel Package
+    - name: Collect Build Outputs
       run: |
-        mkdir hyper-rev-intel
-        mkdir hyper-rev-intel\scripts
+        mkdir hyper-rev-intel -Force
         
-        Get-ChildItem -Path hyper-rev-build -Recurse -Filter "uefi-boot.efi" | ForEach-Object { Copy-Item $_.FullName "hyper-rev-intel\" }
-        Get-ChildItem -Path hyper-rev-build -Recurse -Filter "hyperv-attachment.dll" | ForEach-Object { Copy-Item $_.FullName "hyper-rev-intel\" }
-        Get-ChildItem -Path hyper-rev-build -Recurse -Filter "usermode.exe" | ForEach-Object { Copy-Item $_.FullName "hyper-rev-intel\" }
+        Write-Host "=== Searching for build outputs ==="
         
-        Copy-Item "hyper-rev\scripts\*" "hyper-rev-intel\scripts\" -ErrorAction SilentlyContinue
-        Copy-Item "hyper-rev\README.md" "hyper-rev-intel\" -ErrorAction SilentlyContinue
-        Copy-Item "hyper-rev-build\load-hyper-reV.bat" "hyper-rev-intel\" -ErrorAction SilentlyContinue
+        # Find and copy uefi-boot.efi
+        $uefi = Get-ChildItem -Path hyper-rev-build -Recurse -Filter "uefi-boot.efi" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($uefi) {
+          Copy-Item $uefi.FullName "hyper-rev-intel\"
+          Write-Host "Found: $($uefi.FullName)"
+        } else {
+          Write-Host "WARNING: uefi-boot.efi not found"
+        }
         
-        $buildInfo = "hyper-reV Package (Intel)`nArchitecture: Intel (EPT)`nBuild Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n`nUsage:`n1. Run 02-backup-bootloader.bat`n2. Run load-hyper-reV.bat (Admin)`n3. Reboot"
-        Set-Content "hyper-rev-intel\BUILD_INFO.txt" $buildInfo
+        # Find and copy hyperv-attachment.dll
+        $dll = Get-ChildItem -Path hyper-rev-build -Recurse -Filter "hyperv-attachment.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($dll) {
+          Copy-Item $dll.FullName "hyper-rev-intel\"
+          Write-Host "Found: $($dll.FullName)"
+        } else {
+          Write-Host "WARNING: hyperv-attachment.dll not found"
+        }
         
-        Write-Host "Intel package contents:"
+        # Find and copy usermode.exe
+        $exe = Get-ChildItem -Path hyper-rev-build -Recurse -Filter "usermode.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($exe) {
+          Copy-Item $exe.FullName "hyper-rev-intel\"
+          Write-Host "Found: $($exe.FullName)"
+        } else {
+          Write-Host "WARNING: usermode.exe not found"
+        }
+        
+        # Copy load script
+        if (Test-Path "hyper-rev-build\load-hyper-reV.bat") {
+          Copy-Item "hyper-rev-build\load-hyper-reV.bat" "hyper-rev-intel\"
+        }
+        
+        # Copy our scripts
+        if (Test-Path "hyper-rev\scripts") {
+          Copy-Item "hyper-rev\scripts\*" "hyper-rev-intel\" -ErrorAction SilentlyContinue
+        }
+        
+        # Create info file
+        @"
+hyper-reV Package (Intel)
+==========================
+Architecture: Intel (EPT)
+Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+
+Usage:
+1. Backup your bootloader first!
+2. Run load-hyper-reV.bat as Administrator
+3. Reboot
+4. hyper-reV will load at boot
+
+Files:
+- uefi-boot.efi - UEFI bootloader module
+- hyperv-attachment.dll - Hypervisor module
+- usermode.exe - Control application
+- load-hyper-reV.bat - Installation script
+"@ | Set-Content "hyper-rev-intel\README.txt"
+        
+        Write-Host "=== Package contents ==="
         Get-ChildItem hyper-rev-intel
+      shell: pwsh
 
     - name: Upload Intel Package
       uses: actions/upload-artifact@v4
@@ -204,6 +233,7 @@ jobs:
         name: hyper-rev-intel
         path: hyper-rev-intel/
         retention-days: 30
+        if-no-files-found: warn
 
   # ============================================
   # JOB 3: Build for AMD
@@ -239,50 +269,73 @@ jobs:
         $configFile = "hyper-rev-build\hyperv-attachment\src\arch_config.h"
         
         if (Test-Path $configFile) {
+          Write-Host "Configuring for AMD..."
           $content = Get-Content $configFile -Raw
           $content = $content -replace '#define\s+_INTELMACHINE', '//#define _INTELMACHINE'
           $content = $content -replace '//\s*#define\s+_AMDMACHINE', '#define _AMDMACHINE'
           Set-Content $configFile $content
-          Write-Host "Configured for AMD"
           Get-Content $configFile
         } else {
           Write-Host "Creating arch_config.h for AMD..."
           New-Item -Path (Split-Path $configFile) -ItemType Directory -Force
-          Set-Content $configFile "#pragma once`n//#define _INTELMACHINE`n#define _AMDMACHINE"
+          @"
+#pragma once
+//#define _INTELMACHINE
+#define _AMDMACHINE
+"@ | Set-Content $configFile
         }
+      shell: pwsh
 
-    - name: Build hyper-reV (all components)
+    - name: Build hyper-reV
       run: |
         cd hyper-rev-build
         
-        # Build via main solution file (sets SolutionDir correctly)
+        Write-Host "=== Building hyper-reV.sln ==="
         if (Test-Path "hyper-reV.sln") {
-          Write-Host "Building hyper-reV.sln..."
-          msbuild hyper-reV.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+          msbuild hyper-reV.sln /p:Configuration=Release /p:Platform=x64 /m /v:normal
         } else {
-          Write-Host "hyper-reV.sln not found!"
+          Write-Host "ERROR: hyper-reV.sln not found!"
           Get-ChildItem
+          exit 1
         }
+      shell: pwsh
       continue-on-error: true
 
-    - name: Prepare AMD Package
+    - name: Collect Build Outputs
       run: |
-        mkdir hyper-rev-amd
-        mkdir hyper-rev-amd\scripts
+        mkdir hyper-rev-amd -Force
         
-        Get-ChildItem -Path hyper-rev-build -Recurse -Filter "uefi-boot.efi" | ForEach-Object { Copy-Item $_.FullName "hyper-rev-amd\" }
-        Get-ChildItem -Path hyper-rev-build -Recurse -Filter "hyperv-attachment.dll" | ForEach-Object { Copy-Item $_.FullName "hyper-rev-amd\" }
-        Get-ChildItem -Path hyper-rev-build -Recurse -Filter "usermode.exe" | ForEach-Object { Copy-Item $_.FullName "hyper-rev-amd\" }
+        Write-Host "=== Searching for build outputs ==="
         
-        Copy-Item "hyper-rev\scripts\*" "hyper-rev-amd\scripts\" -ErrorAction SilentlyContinue
-        Copy-Item "hyper-rev\README.md" "hyper-rev-amd\" -ErrorAction SilentlyContinue
-        Copy-Item "hyper-rev-build\load-hyper-reV.bat" "hyper-rev-amd\" -ErrorAction SilentlyContinue
+        $uefi = Get-ChildItem -Path hyper-rev-build -Recurse -Filter "uefi-boot.efi" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($uefi) { Copy-Item $uefi.FullName "hyper-rev-amd\"; Write-Host "Found: $($uefi.FullName)" }
         
-        $buildInfo = "hyper-reV Package (AMD)`nArchitecture: AMD (NPT)`nBuild Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n`nUsage:`n1. Run 02-backup-bootloader.bat`n2. Run load-hyper-reV.bat (Admin)`n3. Reboot"
-        Set-Content "hyper-rev-amd\BUILD_INFO.txt" $buildInfo
+        $dll = Get-ChildItem -Path hyper-rev-build -Recurse -Filter "hyperv-attachment.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($dll) { Copy-Item $dll.FullName "hyper-rev-amd\"; Write-Host "Found: $($dll.FullName)" }
         
-        Write-Host "AMD package contents:"
+        $exe = Get-ChildItem -Path hyper-rev-build -Recurse -Filter "usermode.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($exe) { Copy-Item $exe.FullName "hyper-rev-amd\"; Write-Host "Found: $($exe.FullName)" }
+        
+        if (Test-Path "hyper-rev-build\load-hyper-reV.bat") {
+          Copy-Item "hyper-rev-build\load-hyper-reV.bat" "hyper-rev-amd\"
+        }
+        
+        @"
+hyper-reV Package (AMD)
+========================
+Architecture: AMD (NPT)
+Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+
+Usage:
+1. Backup your bootloader first!
+2. Run load-hyper-reV.bat as Administrator
+3. Reboot
+4. hyper-reV will load at boot
+"@ | Set-Content "hyper-rev-amd\README.txt"
+        
+        Write-Host "=== Package contents ==="
         Get-ChildItem hyper-rev-amd
+      shell: pwsh
 
     - name: Upload AMD Package
       uses: actions/upload-artifact@v4
@@ -290,6 +343,7 @@ jobs:
         name: hyper-rev-amd
         path: hyper-rev-amd/
         retention-days: 30
+        if-no-files-found: warn
 
   # ============================================
   # JOB 4: Build Cheat
