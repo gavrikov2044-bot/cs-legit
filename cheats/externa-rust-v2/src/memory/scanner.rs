@@ -54,7 +54,8 @@ pub fn get_cs2_patterns() -> Vec<Pattern> {
             7
         ),
         
-        // dwLocalPlayerController - "48 8B 05 ? ? ? ? 48 85 C0 74 ? 8B 88"
+
+        // dwLocalPlayerController - multiple patterns to try
         Pattern::new(
             "dwLocalPlayerController",
             "48 8B 05 ? ? ? ? 48 85 C0 74 ? 8B 88",
@@ -83,10 +84,26 @@ pub fn get_cs2_patterns_alt() -> Vec<Pattern> {
             7
         ),
         
-        // dwLocalPlayerController alternative
+        // dwLocalPlayerController - alternative 1
         Pattern::new(
             "dwLocalPlayerController", 
-            "48 89 05 ? ? ? ? 8B 9E",
+            "48 83 3D ? ? ? ? ? 0F 84 ? ? ? ? 8B 0D",
+            3,
+            8
+        ),
+        
+        // dwLocalPlayerController - alternative 2 (common in newer builds)
+        Pattern::new(
+            "dwLocalPlayerController",
+            "48 8B 0D ? ? ? ? 48 8B 01 48 FF 60",
+            3,
+            7
+        ),
+        
+        // dwLocalPlayerController - alternative 3
+        Pattern::new(
+            "dwLocalPlayerController",
+            "48 8B 0D ? ? ? ? 4C 8B C0 48 8B 01",
             3,
             7
         ),

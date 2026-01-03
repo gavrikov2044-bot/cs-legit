@@ -138,8 +138,8 @@ fn main() -> Result<()> {
     // Spawn input handling thread
     spawn_input_thread(config.clone());
 
-    // Main overlay loop
-    run_overlay_loop(state, config)?;
+    // Main overlay loop (pass mem and offsets for direct view matrix reading)
+    run_overlay_loop(state, config, mem, offsets)?;
 
     info!("Exiting...");
     Ok(())
@@ -192,10 +192,7 @@ fn spawn_memory_thread(
             {
                 let mut st = state.lock();
                 
-                // Read view matrix
-                if let Some(mat) = mem.read::<[[f32; 4]; 4]>(mem.client_base + offsets.dw_view_matrix) {
-                    st.view_matrix = mat;
-                }
+                // NOTE: View matrix is now read in render loop for better sync!
                 
                 // Read local player team
                 st.local_team = read_local_team(&mem, &offsets);
@@ -211,7 +208,8 @@ fn spawn_memory_thread(
                 }
             }
             
-            thread::sleep(Duration::from_millis(3));
+            // Slightly faster update for smoother entity tracking
+            thread::sleep(Duration::from_millis(2));
         }
     });
 }
@@ -415,6 +413,8 @@ fn spawn_input_thread(config: Arc<EspConfig>) {
 fn run_overlay_loop(
     state: Arc<Mutex<GameState>>,
     config: Arc<EspConfig>,
+    mem: Arc<memory::Memory>,
+    offsets: Arc<Offsets>,
 ) -> Result<()> {
     let overlay = overlay::renderer::Direct2DOverlay::new()?;
     info!("Overlay initialized: {}x{} | Class: {}", 
@@ -437,6 +437,11 @@ fn run_overlay_loop(
         
         // Only draw if ESP enabled
         if config.enabled.load(Ordering::Relaxed) {
+            // Read view matrix DIRECTLY here for best sync with render
+            // This eliminates jitter when moving mouse
+            let view_matrix: [[f32; 4]; 4] = mem.read(mem.client_base + offsets.dw_view_matrix)
+                .unwrap_or([[0.0; 4]; 4]);
+            
             let st = state.lock();
             
             for ent in &st.entities {
@@ -445,14 +450,13 @@ fn run_overlay_loop(
                     continue;
                 }
                 
-                draw_entity(&overlay, ent, &st.view_matrix, &config);
+                draw_entity(&overlay, ent, &view_matrix, &config);
             }
         }
         
         // End drawing
         if !overlay.end_scene() {
             error!("D2D device lost, attempting recovery...");
-            // Could recreate overlay here, but for now just continue
         }
         
         // FPS counter
@@ -464,8 +468,8 @@ fn run_overlay_loop(
             last_fps_time = std::time::Instant::now();
         }
         
-        // Small sleep to not hog CPU (targeting ~300 FPS)
-        thread::sleep(Duration::from_micros(3000));
+        // Small sleep to not hog CPU
+        thread::sleep(Duration::from_micros(2000));
     }
     
     Ok(())
