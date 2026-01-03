@@ -146,8 +146,9 @@ fn main() -> Result<()> {
                         // Read pawn handle from controller
                         let pawn_h: u32 = mem_clone.read(controller + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
                         
-                        // Debug first valid controller with pawn
-                        if should_log && debug_stats.0 == 1 {
+                        // Debug first valid controller with pawn (ONLY ONCE)
+                        if should_log && debug_stats.0 == 1 && !first_enemy_logged {
+                            first_enemy_logged = true;
                             info!("First ctrl[{}]: 0x{:X}, pawn_h=0x{:X}", i, controller, pawn_h);
                         }
                         
@@ -172,14 +173,11 @@ fn main() -> Result<()> {
                         
                         let team: i32 = mem_clone.read(pawn + game::offsets::netvars::M_I_TEAM_NUM).unwrap_or(0);
                         
-                        // Pos - read from GameSceneNode
-                        let node: usize = mem_clone.read(pawn + game::offsets::netvars::M_P_GAME_SCENE_NODE).unwrap_or(0);
-                        if node == 0 { continue; }
+                        // Pos - read DIRECTLY from Pawn (m_vOldOrigin)
+                        let pos: Vec3 = mem_clone.read(pawn + game::offsets::netvars::M_V_OLD_ORIGIN).unwrap_or(Vec3::ZERO);
                         
-                        let pos: Vec3 = mem_clone.read(node + game::offsets::netvars::M_VEC_ABS_ORIGIN).unwrap_or(Vec3::ZERO);
-                        
-                        // Debug first pawn with position
-                        if should_log && debug_stats.4 == 0 {
+                        // Debug first pawn with position (ONLY ONCE)
+                        if should_log && debug_stats.4 == 0 && !first_enemy_logged {
                             info!("First player: pawn=0x{:X} health={} team={} pos=({:.0},{:.0},{:.0})", 
                                   pawn, health, team, pos.x, pos.y, pos.z);
                         }
@@ -196,12 +194,11 @@ fn main() -> Result<()> {
                         debug_stats.4 += 1;
                     }
                 }
-                
-                // Log stats
-                if should_log {
-                    info!("Stats: ctrl={} pawn_h={} pawn={} health={} added={} | LocalTeam={}",
-                          debug_stats.0, debug_stats.1, debug_stats.2, debug_stats.3, debug_stats.4, st.local_team);
-                }
+                        
+                        // Log stats every 3 seconds
+                        if should_log {
+                            info!("Entities: {} | LocalTeam: {}", debug_stats.4, st.local_team);
+                        }
             }
             thread::sleep(Duration::from_millis(2));
         }
@@ -211,6 +208,7 @@ fn main() -> Result<()> {
     let overlay = overlay::renderer::Direct2DOverlay::new()?;
     info!("Overlay initialized (Direct2D). Window size: {}x{} | [ESP ONLY - NO MENU]", overlay.width, overlay.height);
 
+    let mut first_enemy_logged = false; // Static flag for W2S debug
     loop {
         if !overlay.handle_message() { break; }
         
@@ -221,7 +219,6 @@ fn main() -> Result<()> {
             let mut skipped_team = 0;
             let mut skipped_w2s = 0;
             let mut skipped_size = 0;
-            let mut first_enemy_logged = false;
             
             for ent in &st.entities {
                 // Count teammates but DON'T skip for now (debug)
@@ -274,14 +271,14 @@ fn main() -> Result<()> {
                 }
             }
             
-            // Debug render stats occasionally
+            // Debug render stats occasionally (only if something interesting)
             static mut LAST_LOG: u64 = 0;
             unsafe {
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-                if now > LAST_LOG + 3 {
+                if now > LAST_LOG + 5 && (skipped_w2s > 0 || skipped_size > 0) {
                     LAST_LOG = now;
-                    info!("Render: ents={} drawn={} skip_team={} skip_w2s={} skip_size={}", 
-                          st.entities.len(), drawn, skipped_team, skipped_w2s, skipped_size);
+                    info!("Render issues: skip_w2s={} skip_size={} (ents={} drawn={})", 
+                          skipped_w2s, skipped_size, st.entities.len(), drawn);
                 }
             }
         }

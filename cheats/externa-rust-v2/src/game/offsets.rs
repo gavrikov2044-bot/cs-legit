@@ -14,7 +14,8 @@ pub mod netvars {
     pub const M_I_HEALTH: usize = 0x34C;
     pub const M_I_TEAM_NUM: usize = 0x3EB;
     pub const M_P_GAME_SCENE_NODE: usize = 0x330;
-    pub const M_VEC_ABS_ORIGIN: usize = 0xD0;
+    pub const M_VEC_ABS_ORIGIN: usize = 0xD0; // In GameSceneNode
+    pub const M_V_OLD_ORIGIN: usize = 0x15A0; // Direct on Pawn (alternative)
     pub const M_H_PLAYER_PAWN: usize = 0x8FC;
     // pub const M_MODEL_STATE: usize = 0x190; // For bones (not used yet)
     // pub const M_BONE_ARRAY: usize = 0x80;
