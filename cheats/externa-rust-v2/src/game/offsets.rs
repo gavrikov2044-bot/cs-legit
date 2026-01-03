@@ -35,6 +35,7 @@ impl Default for Offsets {
 impl Offsets {
     /// Get offsets using multiple methods with fallbacks
     /// Priority: Pattern Scanner -> cs2-dumper API -> Hardcoded
+    #[allow(dead_code)]
     pub fn fetch() -> Self {
         log::info!("[Offsets] Fetching offsets...");
         
@@ -91,6 +92,7 @@ impl Offsets {
 // cs2-dumper API Fetch
 // ============================================================================
 
+#[allow(dead_code)]
 #[derive(Deserialize, Debug)]
 struct DumperClientDll {
     #[serde(rename = "dwEntityList")]
@@ -156,6 +158,7 @@ pub mod netvars {
     pub const M_H_PLAYER_PAWN: usize = 0x80C;      // m_hPlayerPawn
     
     // CGameSceneNode
+    #[allow(dead_code)]
     pub const M_VEC_ABS_ORIGIN: usize = 0xD0;      // m_vecAbsOrigin
     
     // CSkeletonInstance / Bones

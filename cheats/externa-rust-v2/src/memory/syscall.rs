@@ -84,6 +84,7 @@ pub fn is_active() -> bool {
 
 /// Get current SSN (for debugging)
 #[inline]
+#[allow(dead_code)]
 pub fn get_ssn() -> u32 {
     SSN_NT_READ.load(Ordering::Relaxed)
 }

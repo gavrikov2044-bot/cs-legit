@@ -24,6 +24,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 
 pub struct Direct2DOverlay {
+    #[allow(dead_code)]
     hwnd: HWND,
     _factory: ID2D1Factory,
     target: ID2D1HwndRenderTarget,
@@ -232,6 +233,7 @@ impl Direct2DOverlay {
         }
     }
     
+    #[allow(dead_code)]
     pub fn hwnd(&self) -> HWND {
         self.hwnd
     }

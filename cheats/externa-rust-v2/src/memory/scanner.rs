@@ -102,6 +102,7 @@ pub fn get_cs2_patterns_alt() -> Vec<Pattern> {
 }
 
 /// Scan result with offset and validation info
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ScanResult {
     pub name: String,

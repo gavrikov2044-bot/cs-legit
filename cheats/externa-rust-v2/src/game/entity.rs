@@ -63,7 +63,9 @@ impl Bones {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Entity {
+    #[allow(dead_code)]
     pub pawn: usize,
+    #[allow(dead_code)]
     pub controller: usize,
     pub pos: Vec3,
     pub health: i32,

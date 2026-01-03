@@ -34,7 +34,12 @@ jobs:
       working-directory: cheats/externa-rust-v2
       shell: pwsh
       run: |
-        $version = (Select-String -Path Cargo.toml -Pattern 'version = "(.+)"' | ForEach-Object { $_.Matches.Groups[1].Value })
+        $content = Get-Content Cargo.toml -Raw
+        if ($content -match 'version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"') {
+          $version = $Matches[1]
+        } else {
+          $version = "unknown"
+        }
         echo "VERSION=$version" >> $env:GITHUB_OUTPUT
         echo "Building version: $version"
     
