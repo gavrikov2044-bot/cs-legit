@@ -137,11 +137,7 @@ jobs:
         } else {
           Write-Host "Creating arch_config.h for Intel..."
           New-Item -Path (Split-Path $configFile) -ItemType Directory -Force
-          @"
-#pragma once
-#define _INTELMACHINE
-//#define _AMDMACHINE
-"@ | Set-Content $configFile
+          "#pragma once`n#define _INTELMACHINE`n//#define _AMDMACHINE" | Set-Content $configFile
         }
       shell: pwsh
 
@@ -204,24 +200,12 @@ jobs:
         }
         
         # Create info file
-        @"
-hyper-reV Package (Intel)
-==========================
-Architecture: Intel (EPT)
-Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-
-Usage:
-1. Backup your bootloader first!
-2. Run load-hyper-reV.bat as Administrator
-3. Reboot
-4. hyper-reV will load at boot
-
-Files:
-- uefi-boot.efi - UEFI bootloader module
-- hyperv-attachment.dll - Hypervisor module
-- usermode.exe - Control application
-- load-hyper-reV.bat - Installation script
-"@ | Set-Content "hyper-rev-intel\README.txt"
+        $readme = "hyper-reV Package (Intel)`n"
+        $readme += "==========================`n"
+        $readme += "Architecture: Intel (EPT)`n"
+        $readme += "Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n`n"
+        $readme += "Usage:`n1. Backup your bootloader first!`n2. Run load-hyper-reV.bat as Administrator`n3. Reboot`n"
+        Set-Content "hyper-rev-intel\README.txt" $readme
         
         Write-Host "=== Package contents ==="
         Get-ChildItem hyper-rev-intel
@@ -278,11 +262,7 @@ Files:
         } else {
           Write-Host "Creating arch_config.h for AMD..."
           New-Item -Path (Split-Path $configFile) -ItemType Directory -Force
-          @"
-#pragma once
-//#define _INTELMACHINE
-#define _AMDMACHINE
-"@ | Set-Content $configFile
+          "#pragma once`n//#define _INTELMACHINE`n#define _AMDMACHINE" | Set-Content $configFile
         }
       shell: pwsh
 
@@ -320,18 +300,12 @@ Files:
           Copy-Item "hyper-rev-build\load-hyper-reV.bat" "hyper-rev-amd\"
         }
         
-        @"
-hyper-reV Package (AMD)
-========================
-Architecture: AMD (NPT)
-Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-
-Usage:
-1. Backup your bootloader first!
-2. Run load-hyper-reV.bat as Administrator
-3. Reboot
-4. hyper-reV will load at boot
-"@ | Set-Content "hyper-rev-amd\README.txt"
+        $readme = "hyper-reV Package (AMD)`n"
+        $readme += "========================`n"
+        $readme += "Architecture: AMD (NPT)`n"
+        $readme += "Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n`n"
+        $readme += "Usage:`n1. Backup your bootloader first!`n2. Run load-hyper-reV.bat as Administrator`n3. Reboot`n"
+        Set-Content "hyper-rev-amd\README.txt" $readme
         
         Write-Host "=== Package contents ==="
         Get-ChildItem hyper-rev-amd
