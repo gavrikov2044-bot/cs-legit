@@ -174,8 +174,14 @@ fn main() -> Result<()> {
                         
                         let team: i32 = mem_clone.read(pawn + game::offsets::netvars::M_I_TEAM_NUM).unwrap_or(0);
                         
-                        // Pos - read DIRECTLY from Pawn (m_vOldOrigin)
-                        let pos: Vec3 = mem_clone.read(pawn + game::offsets::netvars::M_V_OLD_ORIGIN).unwrap_or(Vec3::ZERO);
+                        // Pos - read from GameSceneNode (Visual interpolation)
+                        let node: usize = mem_clone.read(pawn + game::offsets::netvars::M_P_GAME_SCENE_NODE).unwrap_or(0);
+                        let pos = if node != 0 {
+                            mem_clone.read(node + game::offsets::netvars::M_VEC_ABS_ORIGIN).unwrap_or(Vec3::ZERO)
+                        } else {
+                            // Fallback to m_vOldOrigin if node is missing
+                            mem_clone.read(pawn + game::offsets::netvars::M_V_OLD_ORIGIN).unwrap_or(Vec3::ZERO)
+                        };
                         
                         // Debug first pawn with position (ONLY ONCE)
                         if should_log && debug_stats.4 == 0 && unsafe { !FIRST_ENEMY_LOGGED } {
