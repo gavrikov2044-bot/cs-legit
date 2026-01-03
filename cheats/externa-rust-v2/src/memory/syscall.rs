@@ -117,9 +117,9 @@ extern "C" {
     ) -> i32;
 }
 
-/// x86_64 syscall stub
-/// Arguments: RCX, RDX, R8, R9, [RSP+0x28], [RSP+0x30]
-/// NtReadVirtualMemory(Handle, BaseAddress, Buffer, Size, BytesRead)
+// x86_64 syscall stub
+// Arguments: RCX, RDX, R8, R9, [RSP+0x28], [RSP+0x30]
+// NtReadVirtualMemory(Handle, BaseAddress, Buffer, Size, BytesRead)
 #[cfg(target_arch = "x86_64")]
 global_asm!(
     ".section .text",

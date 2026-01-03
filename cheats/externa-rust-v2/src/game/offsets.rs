@@ -110,21 +110,22 @@ fn fetch_from_api() -> anyhow::Result<Offsets> {
         .timeout(std::time::Duration::from_secs(10))
         .call()?;
     
-    let json: serde_json::Value = response.into_json()?;
+    let body = response.into_string()?;
+    let json: serde_json::Value = serde_json::from_str(&body)?;
     
     let client = json.get("client.dll")
         .ok_or_else(|| anyhow::anyhow!("client.dll not found"))?;
     
     let entity_list = client.get("dwEntityList")
-        .and_then(|v| v.as_u64())
+        .and_then(|v: &serde_json::Value| v.as_u64())
         .ok_or_else(|| anyhow::anyhow!("dwEntityList not found"))? as usize;
     
     let local_player = client.get("dwLocalPlayerController")
-        .and_then(|v| v.as_u64())
+        .and_then(|v: &serde_json::Value| v.as_u64())
         .ok_or_else(|| anyhow::anyhow!("dwLocalPlayerController not found"))? as usize;
     
     let view_matrix = client.get("dwViewMatrix")
-        .and_then(|v| v.as_u64())
+        .and_then(|v: &serde_json::Value| v.as_u64())
         .ok_or_else(|| anyhow::anyhow!("dwViewMatrix not found"))? as usize;
     
     log::info!("[Offsets] dwEntityList: 0x{:X}", entity_list);
