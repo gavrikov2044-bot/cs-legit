@@ -467,25 +467,35 @@ fn run_overlay_loop(
                 let game_scene_node: usize = mem.read(pawn + netvars::M_P_GAME_SCENE_NODE).unwrap_or(0);
                 if game_scene_node == 0 { continue; }
                 
-                // Read position FRESH
-                let pos: Vec3 = mem.read(game_scene_node + 0xD0).unwrap_or(Vec3::ZERO);
-                if pos == Vec3::ZERO { continue; }
-                
-                // Read head bone FRESH for accurate head position
+                // Get bone array pointer
                 let model_state = game_scene_node + netvars::M_MODEL_STATE;
                 let bone_array: usize = mem.read(model_state + netvars::M_BONE_ARRAY).unwrap_or(0);
                 
-                let head_pos = if bone_array != 0 {
-                    mem.read::<Vec3>(bone_array + netvars::BONE_HEAD * 32).unwrap_or(pos + Vec3::new(0.0, 0.0, 72.0))
+                // Read ALL positions from SAME source (bone array) for perfect sync
+                const BONE_SIZE: usize = 32;
+                
+                let (feet_pos, head_pos) = if bone_array != 0 {
+                    // Use left foot for feet position, head for head
+                    let head = mem.read::<Vec3>(bone_array + netvars::BONE_HEAD * BONE_SIZE).unwrap_or(Vec3::ZERO);
+                    let left_foot = mem.read::<Vec3>(bone_array + netvars::BONE_LEFT_FOOT * BONE_SIZE).unwrap_or(Vec3::ZERO);
+                    
+                    if head == Vec3::ZERO || left_foot == Vec3::ZERO {
+                        continue; // Skip if bones invalid
+                    }
+                    
+                    (left_foot, head)
                 } else {
-                    pos + Vec3::new(0.0, 0.0, 72.0)
+                    // Fallback to m_vecAbsOrigin if no bones
+                    let pos: Vec3 = mem.read(game_scene_node + 0xD0).unwrap_or(Vec3::ZERO);
+                    if pos == Vec3::ZERO { continue; }
+                    (pos, pos + Vec3::new(0.0, 0.0, 72.0))
                 };
                 
                 // Read health FRESH
                 let health: i32 = mem.read(pawn + netvars::M_I_HEALTH).unwrap_or(100);
                 
-                // Draw immediately with fresh data
-                draw_entity_fresh(&overlay, pos, head_pos, health, &view_matrix, &config);
+                // Draw immediately with fresh data - BOTH positions from same source
+                draw_entity_fresh(&overlay, feet_pos, head_pos, health, &view_matrix, &config);
             }
         }
         
