@@ -86,54 +86,39 @@ struct GameState {
     local_team: i32,
 }
 
-// Screen position cache for time-based smoothing
+// Screen position cache with clamp-based smoothing (Colin's approach)
 use std::collections::HashMap;
 
 struct ScreenPosCache {
     positions: HashMap<usize, (f32, f32, f32, f32)>, // pawn -> (x, y, w, h)
-    last_frame: std::time::Instant,
+    tick_duration: f32, // seconds per tick
 }
 
 impl ScreenPosCache {
     fn new() -> Self {
         Self { 
             positions: HashMap::new(),
-            last_frame: std::time::Instant::now(),
+            tick_duration: 0.007, // ~7ms like CS2 tick rate
         }
     }
     
-    /// Time-based smooth position update
-    /// Uses frame delta to ensure consistent smoothing regardless of FPS
+    /// Clamp-based smooth position update (no flick detachment)
+    /// max_move = 180°/s * tick_duration
     fn update(&mut self, pawn: usize, new_x: f32, new_y: f32, new_w: f32, new_h: f32) -> (f32, f32, f32, f32) {
-        let dt = self.last_frame.elapsed().as_secs_f32();
-        
-        // Speed limit: max pixels per second the box can move
-        // Higher = more responsive, Lower = smoother
-        const MAX_SPEED: f32 = 2500.0; // pixels per second
-        let max_move = MAX_SPEED * dt;
+        // Max movement per tick: 180 pixels/tick at ~128 ticks/sec = ~23000 px/sec
+        let max_move = 180.0 * self.tick_duration;
         
         if let Some(&(old_x, old_y, old_w, old_h)) = self.positions.get(&pawn) {
-            // Calculate distance to move
-            let dx = new_x - old_x;
-            let dy = new_y - old_y;
-            let dw = new_w - old_w;
-            let dh = new_h - old_h;
+            // Clamp movement - prevents detachment during fast flicks
+            let dx = (new_x - old_x).clamp(-max_move, max_move);
+            let dy = (new_y - old_y).clamp(-max_move, max_move);
+            let dw = (new_w - old_w).clamp(-max_move * 0.5, max_move * 0.5);
+            let dh = (new_h - old_h).clamp(-max_move * 0.5, max_move * 0.5);
             
-            let dist = (dx * dx + dy * dy).sqrt();
-            
-            let (smooth_x, smooth_y) = if dist > max_move && dist > 0.01 {
-                // Limit movement speed
-                let scale = max_move / dist;
-                (old_x + dx * scale, old_y + dy * scale)
-            } else {
-                // Close enough, snap to target
-                (new_x, new_y)
-            };
-            
-            // Smooth size changes (less aggressive)
-            let size_factor = (dt * 15.0).min(1.0); // ~15 updates per second for size
-            let smooth_w = old_w + dw * size_factor;
-            let smooth_h = old_h + dh * size_factor;
+            let smooth_x = old_x + dx;
+            let smooth_y = old_y + dy;
+            let smooth_w = old_w + dw;
+            let smooth_h = old_h + dh;
             
             self.positions.insert(pawn, (smooth_x, smooth_y, smooth_w, smooth_h));
             (smooth_x, smooth_y, smooth_w, smooth_h)
@@ -143,9 +128,9 @@ impl ScreenPosCache {
         }
     }
     
-    /// Call at start of each frame to update delta time
-    fn begin_frame(&mut self) {
-        self.last_frame = std::time::Instant::now();
+    /// Set tick duration for smoothing calculation
+    fn set_tick(&mut self, dt: f32) {
+        self.tick_duration = dt;
     }
     
     /// Clean up old entries (call periodically)
@@ -493,7 +478,13 @@ fn run_overlay_loop(
     let mut pos_cache = ScreenPosCache::new();
     let mut cleanup_timer = std::time::Instant::now();
     
+    // Colin's approach: 7ms tick (~128 ticks/sec, matches CS2)
+    let tick = Duration::from_millis(7);
+    let mut last_tick = std::time::Instant::now();
+    
     loop {
+        let frame_start = std::time::Instant::now();
+        
         // Handle Windows messages
         if !overlay.handle_message() {
             break;
@@ -507,8 +498,10 @@ fn run_overlay_loop(
         
         // Only draw if ESP enabled
         if config.enabled.load(Ordering::Relaxed) {
-            // Update frame timing for smoothing
-            pos_cache.begin_frame();
+            // Update tick duration for smoothing
+            let dt = last_tick.elapsed().as_secs_f32();
+            pos_cache.set_tick(dt);
+            last_tick = std::time::Instant::now();
             
             // Read view matrix DIRECTLY here for best sync with render
             let view_matrix: [[f32; 4]; 4] = mem.read(mem.client_base + offsets.dw_view_matrix)
@@ -549,8 +542,10 @@ fn run_overlay_loop(
             last_fps_time = std::time::Instant::now();
         }
         
-        // Small sleep to not hog CPU
-        thread::sleep(Duration::from_micros(2000));
+        // Precise timing: sleep remaining time to hit 7ms tick
+        let elapsed = frame_start.elapsed();
+        let sleep_time = tick.saturating_sub(elapsed);
+        thread::sleep(sleep_time);
     }
     
     Ok(())

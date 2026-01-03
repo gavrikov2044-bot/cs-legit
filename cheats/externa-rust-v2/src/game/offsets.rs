@@ -4,12 +4,12 @@
 use serde::Deserialize;
 
 // ============================================================================
-// Hardcoded Fallback Offsets (2026-01-03)
+// Hardcoded Fallback Offsets (cs2-dumper 2026-01-03)
 // ============================================================================
 
-pub const DW_ENTITY_LIST: usize = 0x1A146C8;
-pub const DW_LOCAL_PLAYER_CONTROLLER: usize = 0x1A6ED90;
-pub const DW_VIEW_MATRIX: usize = 0x1A84490;
+pub const DW_ENTITY_LIST: usize = 0x1A146C8;              // cs2-dumper
+pub const DW_LOCAL_PLAYER_CONTROLLER: usize = 0x1A6ED90;  // cs2-dumper
+pub const DW_VIEW_MATRIX: usize = 0x1A84490;              // cs2-dumper
 
 // ============================================================================
 // Offsets Struct
@@ -56,40 +56,28 @@ impl Offsets {
         Self::default()
     }
     
-    /// Get offsets with pattern scanning (requires PID)
-    /// Uses hybrid approach: scanner for reliable offsets, API for problematic ones
-    pub fn fetch_with_scan(pid: u32) -> Self {
-        log::info!("[Offsets] Fetching offsets (hybrid mode)...");
+    /// Get offsets - prioritize API, fallback to hardcoded
+    /// Scanner disabled - gives wrong results
+    pub fn fetch_with_scan(_pid: u32) -> Self {
+        log::info!("[Offsets] Fetching offsets...");
         
-        // Start with defaults
-        let mut result = Self::default();
-        
-        // Try API first for dwLocalPlayerController (scanner is unreliable for this)
-        if let Ok(api_offsets) = fetch_from_api() {
-            result.dw_local_player_controller = api_offsets.dw_local_player_controller;
-            log::info!("[Offsets] dwLocalPlayerController from API: 0x{:X}", result.dw_local_player_controller);
-            
-            // Also use API values as fallback
-            result.dw_entity_list = api_offsets.dw_entity_list;
-            result.dw_view_matrix = api_offsets.dw_view_matrix;
-        }
-        
-        // Try pattern scanner for EntityList and ViewMatrix (more reliable)
-        match crate::memory::scanner::scan_offsets(pid, "client.dll") {
-            Ok(scanned) => {
-                // Only use scanner results for EntityList and ViewMatrix
-                // LocalPlayerController pattern is known to be unreliable
-                result.dw_entity_list = scanned.dw_entity_list;
-                result.dw_view_matrix = scanned.dw_view_matrix;
-                log::info!("[Offsets] dwEntityList from scanner: 0x{:X}", result.dw_entity_list);
-                log::info!("[Offsets] dwViewMatrix from scanner: 0x{:X}", result.dw_view_matrix);
+        // Try cs2-dumper API first
+        match fetch_from_api() {
+            Ok(offsets) => {
+                log::info!("[Offsets] Loaded from cs2-dumper API:");
+                log::info!("[Offsets]   dwEntityList: 0x{:X}", offsets.dw_entity_list);
+                log::info!("[Offsets]   dwLocalPlayerController: 0x{:X}", offsets.dw_local_player_controller);
+                log::info!("[Offsets]   dwViewMatrix: 0x{:X}", offsets.dw_view_matrix);
+                return offsets;
             }
             Err(e) => {
-                log::warn!("[Offsets] Pattern scan failed: {}, using API/fallback", e);
+                log::warn!("[Offsets] API failed: {}", e);
             }
         }
         
-        log::info!("[Offsets] Final offsets:");
+        // Fallback to hardcoded
+        let result = Self::default();
+        log::warn!("[Offsets] Using HARDCODED fallback:");
         log::info!("[Offsets]   dwEntityList: 0x{:X}", result.dw_entity_list);
         log::info!("[Offsets]   dwLocalPlayerController: 0x{:X}", result.dw_local_player_controller);
         log::info!("[Offsets]   dwViewMatrix: 0x{:X}", result.dw_view_matrix);
