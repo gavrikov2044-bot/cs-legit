@@ -299,13 +299,17 @@ fn read_entities(mem: &memory::Memory, offsets: &Offsets, entities: &mut Vec<Ent
         
         let team: i32 = mem.read(pawn + netvars::M_I_TEAM_NUM).unwrap_or(0);
         
-        // Position
-        let pos: Vec3 = mem.read(pawn + netvars::M_V_OLD_ORIGIN).unwrap_or(Vec3::ZERO);
+        // Get GameSceneNode for accurate position
+        let game_scene_node: usize = mem.read(pawn + netvars::M_P_GAME_SCENE_NODE).unwrap_or(0);
+        if game_scene_node == 0 || game_scene_node > 0x7FF000000000 { continue; }
+        
+        // Use m_vecAbsOrigin from GameSceneNode (actual render position)
+        let pos: Vec3 = mem.read(game_scene_node + 0xD0).unwrap_or(Vec3::ZERO); // m_vecAbsOrigin
         if pos == Vec3::ZERO { continue; }
         stats.5 += 1;
         
-        // Read bones
-        let bones = read_bones(mem, pawn);
+        // Read bones (pass game_scene_node to avoid double-read)
+        let bones = read_bones_from_node(mem, game_scene_node);
         
         entities.push(Entity {
             pawn,
@@ -324,14 +328,9 @@ fn read_entities(mem: &memory::Memory, offsets: &Offsets, entities: &mut Vec<Ent
     }
 }
 
-fn read_bones(mem: &memory::Memory, pawn: usize) -> Bones {
+/// Read bones from GameSceneNode (avoids double-reading the node)
+fn read_bones_from_node(mem: &memory::Memory, game_scene_node: usize) -> Bones {
     let mut bones = Bones::default();
-    
-    // Get GameSceneNode
-    let game_scene_node: usize = mem.read(pawn + netvars::M_P_GAME_SCENE_NODE).unwrap_or(0);
-    if game_scene_node == 0 || game_scene_node > 0x7FF000000000 {
-        return bones;
-    }
     
     // Get bone array pointer (modelState + boneArray offset)
     let model_state = game_scene_node + netvars::M_MODEL_STATE;
