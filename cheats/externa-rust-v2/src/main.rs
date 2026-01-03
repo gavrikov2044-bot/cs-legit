@@ -83,6 +83,7 @@ fn main() -> Result<()> {
     thread::spawn(move || {
         info!("Memory thread started.");
         let mut last_debug = std::time::Instant::now();
+        static mut FIRST_ENEMY_LOGGED: bool = false;
         loop {
             if let Ok(mut st) = state_clone.lock() {
                 // Read Matrix
@@ -147,8 +148,8 @@ fn main() -> Result<()> {
                         let pawn_h: u32 = mem_clone.read(controller + game::offsets::netvars::M_H_PLAYER_PAWN).unwrap_or(0);
                         
                         // Debug first valid controller with pawn (ONLY ONCE)
-                        if should_log && debug_stats.0 == 1 && !first_enemy_logged {
-                            first_enemy_logged = true;
+                        if should_log && debug_stats.0 == 1 && unsafe { !FIRST_ENEMY_LOGGED } {
+                            unsafe { FIRST_ENEMY_LOGGED = true; }
                             info!("First ctrl[{}]: 0x{:X}, pawn_h=0x{:X}", i, controller, pawn_h);
                         }
                         
@@ -177,7 +178,7 @@ fn main() -> Result<()> {
                         let pos: Vec3 = mem_clone.read(pawn + game::offsets::netvars::M_V_OLD_ORIGIN).unwrap_or(Vec3::ZERO);
                         
                         // Debug first pawn with position (ONLY ONCE)
-                        if should_log && debug_stats.4 == 0 && !first_enemy_logged {
+                        if should_log && debug_stats.4 == 0 && unsafe { !FIRST_ENEMY_LOGGED } {
                             info!("First player: pawn=0x{:X} health={} team={} pos=({:.0},{:.0},{:.0})", 
                                   pawn, health, team, pos.x, pos.y, pos.z);
                         }
@@ -208,7 +209,6 @@ fn main() -> Result<()> {
     let overlay = overlay::renderer::Direct2DOverlay::new()?;
     info!("Overlay initialized (Direct2D). Window size: {}x{} | [ESP ONLY - NO MENU]", overlay.width, overlay.height);
 
-    let mut first_enemy_logged = false; // Static flag for W2S debug
     loop {
         if !overlay.handle_message() { break; }
         
@@ -244,9 +244,10 @@ fn main() -> Result<()> {
                         let x = s_head.x - w / 2.0;
                         let y = s_head.y;
                         
-                        // Debug first enemy - full matrix dump
-                        if !first_enemy_logged {
-                            first_enemy_logged = true;
+                        // W2S debug (ONLY ONCE) - using static flag from memory thread
+                        static mut W2S_LOGGED: bool = false;
+                        if unsafe { !W2S_LOGGED } {
+                            unsafe { W2S_LOGGED = true; }
                             // Calculate clip coords for debug
                             let clip_x = st.view_matrix[0][0] * ent.pos.x + st.view_matrix[0][1] * ent.pos.y + st.view_matrix[0][2] * ent.pos.z + st.view_matrix[0][3];
                             let clip_y = st.view_matrix[1][0] * ent.pos.x + st.view_matrix[1][1] * ent.pos.y + st.view_matrix[1][2] * ent.pos.z + st.view_matrix[1][3];
