@@ -165,32 +165,17 @@ jobs:
           Set-Content $configFile "#pragma once`n#define _INTELMACHINE`n//#define _AMDMACHINE"
         }
 
-    - name: Build uefi-boot.efi
+    - name: Build hyper-reV (all components)
       run: |
-        cd hyper-rev-build\uefi-boot
-        $slnFile = Get-ChildItem -Filter "*.sln" | Select-Object -First 1
-        if ($slnFile) {
-          Write-Host "Building $($slnFile.Name)..."
-          msbuild $slnFile.Name /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+        cd hyper-rev-build
+        
+        # Build via main solution file (sets SolutionDir correctly)
+        if (Test-Path "hyper-reV.sln") {
+          Write-Host "Building hyper-reV.sln..."
+          msbuild hyper-reV.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
         } else {
-          Write-Host "No solution file found in uefi-boot"
+          Write-Host "hyper-reV.sln not found!"
           Get-ChildItem
-        }
-      continue-on-error: true
-
-    - name: Build hyperv-attachment.dll
-      run: |
-        cd hyper-rev-build\hyperv-attachment
-        $slnFile = Get-ChildItem -Filter "*.sln" | Select-Object -First 1
-        if ($slnFile) {
-          Write-Host "Building $($slnFile.Name)..."
-          msbuild $slnFile.Name /p:Configuration=Release /p:Platform=x64 /m /v:minimal
-        } else {
-          Write-Host "No solution file in hyperv-attachment, trying vcxproj..."
-          $vcxFile = Get-ChildItem -Filter "*.vcxproj" | Select-Object -First 1
-          if ($vcxFile) {
-            msbuild $vcxFile.Name /p:Configuration=Release /p:Platform=x64 /m /v:minimal
-          }
         }
       continue-on-error: true
 
@@ -266,26 +251,17 @@ jobs:
           Set-Content $configFile "#pragma once`n//#define _INTELMACHINE`n#define _AMDMACHINE"
         }
 
-    - name: Build uefi-boot.efi
+    - name: Build hyper-reV (all components)
       run: |
-        cd hyper-rev-build\uefi-boot
-        $slnFile = Get-ChildItem -Filter "*.sln" | Select-Object -First 1
-        if ($slnFile) {
-          msbuild $slnFile.Name /p:Configuration=Release /p:Platform=x64 /m /v:minimal
-        }
-      continue-on-error: true
-
-    - name: Build hyperv-attachment.dll
-      run: |
-        cd hyper-rev-build\hyperv-attachment
-        $slnFile = Get-ChildItem -Filter "*.sln" | Select-Object -First 1
-        if ($slnFile) {
-          msbuild $slnFile.Name /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+        cd hyper-rev-build
+        
+        # Build via main solution file (sets SolutionDir correctly)
+        if (Test-Path "hyper-reV.sln") {
+          Write-Host "Building hyper-reV.sln..."
+          msbuild hyper-reV.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
         } else {
-          $vcxFile = Get-ChildItem -Filter "*.vcxproj" | Select-Object -First 1
-          if ($vcxFile) {
-            msbuild $vcxFile.Name /p:Configuration=Release /p:Platform=x64 /m /v:minimal
-          }
+          Write-Host "hyper-reV.sln not found!"
+          Get-ChildItem
         }
       continue-on-error: true
 
