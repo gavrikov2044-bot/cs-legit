@@ -163,11 +163,13 @@ impl Direct2DOverlay {
 
     pub fn end_scene(&self) -> bool {
         unsafe {
-            // EndDraw returns error if device lost
-            match self.target.EndDraw(None, None) {
+            // EndDraw returns error if device lost  
+            // Wrapped in Result handling to catch any errors
+            let result = self.target.EndDraw(None, None);
+            
+            match result {
                 Ok(_) => {
-                    // DwmFlush disabled - was causing crashes on some systems
-                    // let _ = DwmFlush();
+                    // Success - frame presented
                     true
                 }
                 Err(e) => {

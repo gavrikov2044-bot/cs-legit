@@ -529,8 +529,11 @@ fn run_overlay_loop(
             info!("[Render] Frame {} - scene started", frame_count);
         }
         
+        // DEBUG: Skip all drawing to test if crash is in D2D or drawing code
+        let skip_drawing = false; // Set to true to skip drawing
+        
         // Only draw if ESP enabled
-        if config.enabled.load(Ordering::Relaxed) {
+        if config.enabled.load(Ordering::Relaxed) && !skip_drawing {
             if frame_count < 3 {
                 info!("[Render] Frame {} - reading ViewMatrix", frame_count);
             }
