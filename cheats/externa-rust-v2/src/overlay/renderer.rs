@@ -163,13 +163,18 @@ impl Direct2DOverlay {
     pub fn end_scene(&self) -> bool {
         unsafe {
             // EndDraw returns error if device lost
-            let result = self.target.EndDraw(None, None).is_ok();
-            
-            // Sync with Desktop Window Manager for smoother display
-            // This waits for the next VBlank, reducing tearing and improving sync
-            let _ = DwmFlush();
-            
-            result
+            match self.target.EndDraw(None, None) {
+                Ok(_) => {
+                    // Sync with Desktop Window Manager for smoother display
+                    // This waits for the next VBlank, reducing tearing and improving sync
+                    let _ = DwmFlush();
+                    true
+                }
+                Err(e) => {
+                    log::error!("[Overlay] EndDraw failed: {:?}", e);
+                    false
+                }
+            }
         }
     }
 

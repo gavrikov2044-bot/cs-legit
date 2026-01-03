@@ -137,8 +137,12 @@ impl EmbeddedDriver {
             Err(e) => {
                 log::warn!("[Embedded] KDMapper failed: {}", e);
                 log::info!("[Embedded] Falling back to syscall mode");
+                log::info!("[Embedded] Debug: NOT cleaning up files for investigation");
+                log::info!("[Embedded] Intel driver at: {:?}", self.intel_path);
+                log::info!("[Embedded] Laith driver at: {:?}", self.laith_path);
                 
-                self.cleanup_files();
+                // Don't cleanup - keep files for debugging
+                // self.cleanup_files();
                 Ok(false)
             }
         }

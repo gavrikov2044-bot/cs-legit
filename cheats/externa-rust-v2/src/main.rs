@@ -598,13 +598,24 @@ fn run_overlay_loop(
             info!("[Render] Frame {} - calling end_scene", frame_count);
         }
         
-        // End drawing
-        if !overlay.end_scene() {
-            error!("D2D device lost, attempting recovery...");
-        }
+        // End drawing with error handling
+        let end_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            overlay.end_scene()
+        }));
         
-        if frame_count < 3 {
-            info!("[Render] Frame {} completed successfully", frame_count);
+        match end_result {
+            Ok(true) => {
+                if frame_count < 3 {
+                    info!("[Render] Frame {} completed successfully", frame_count);
+                }
+            }
+            Ok(false) => {
+                error!("[Render] D2D EndDraw failed, device may be lost");
+            }
+            Err(e) => {
+                error!("[Render] PANIC in end_scene: {:?}", e);
+                break;
+            }
         }
         
         // FPS counter
